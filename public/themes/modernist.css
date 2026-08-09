@@ -1,0 +1,88 @@
+/* ============================================================
+   Modernist — design language variant.
+   Token translation of the Claude Design "Yoyocollection" theme
+   (themes/yoyocollection.css in its source system) onto this app's
+   token vocabulary. Loaded after styles.css; inert unless
+   <html data-design="modernist">.
+
+   Source spec: #f0ede6 tinted ground · Outfit (geometric, 800 heads)
+   · 18px radius · orange #f77f00 + teal #17a390 complementary pair
+   · strong dividers · full-color photography.
+   ============================================================ */
+
+:root[data-design="modernist"] {
+  /* ground + surfaces (their neutral ramp, warm-tinted) */
+  --bg:            #f0ede6;
+  --content-bg:    #f0ede6;
+  --sidebar-bg:    #e7e2d5;
+  --surface:       #e7e2d5;
+  --surface-2:     #efeadf;
+  --surface-3:     #ddd7c9;
+  /* ink */
+  --text:          #26221a;
+  --muted:         rgba(38,34,26,0.58);
+  --faint:         rgba(38,34,26,0.42);
+  /* "strong dividers" is the Modernist signature — 40% ink rules */
+  --border:        rgba(38,34,26,0.40);
+  --border-strong: rgba(38,34,26,0.62);
+  --separator:     rgba(38,34,26,0.32);
+  --hover:         rgba(38,34,26,0.05);
+  /* accent — orange (their 500/600/700/200/300 ramp) */
+  --accent:        #f77f00;
+  --accent-hover:  #d16700;
+  --accent-press:  #a44f00;
+  --accent-soft:   #ffe3c2;
+  --accent-mid:    #ffc98d;
+  --accent-deep:   #a44f00;
+  /* dark ink on orange reads far better than white (≈5:1 vs ≈2.5:1) */
+  --on-accent:     #2f2c25;
+  /* second accent — the lighter orange band takes the old gold roles */
+  --gold:          #ffa53f;
+  --gold-soft:     #fff3e5;
+  --gold-mid:      #ffe3c2;
+  --gold-deep:     #753a04;
+  /* semantic — their teal-2 is the positive voice */
+  --green:         #0c8575;
+  --danger:        #a8422a;
+  /* shape: 18px system, flush 10px small controls (no pills) */
+  --radius:        18px;
+  --radius-sm:     10px;
+  --radius-lg:     28px;
+  /* elevation — their ink-tinted trio */
+  --shadow-sm:     0 1px 2px rgba(47,44,37,0.14);
+  --shadow-card:   0 3px 10px rgba(47,44,37,0.16);
+  --shadow:        0 12px 32px rgba(47,44,37,0.22);
+  /* type — Outfit for both voices */
+  --font-heading:  "Outfit", system-ui, sans-serif;
+  --font: "Outfit", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* Caprasimo is a display face worn at weight 400; Outfit at 400 reads as
+   body text. Re-weight every heading role to the spec's 800. */
+:root[data-design="modernist"] h1,
+:root[data-design="modernist"] h2,
+:root[data-design="modernist"] h3,
+:root[data-design="modernist"] h4,
+:root[data-design="modernist"] h5,
+:root[data-design="modernist"] h6,
+:root[data-design="modernist"] .toolbar-title,
+:root[data-design="modernist"] .hero-name,
+:root[data-design="modernist"] .brand-name,
+:root[data-design="modernist"] .maker-name,
+:root[data-design="modernist"] .shelf-name,
+:root[data-design="modernist"] .modal-head h2,
+:root[data-design="modernist"] .sheet-title,
+:root[data-design="modernist"] .hero-title,
+:root[data-design="modernist"] .band-num,
+:root[data-design="modernist"] .dial-val,
+:root[data-design="modernist"] .idial-val,
+:root[data-design="modernist"] .metric-value,
+:root[data-design="modernist"] .stat-num,
+:root[data-design="modernist"] .sale-price,
+:root[data-design="modernist"] .bar-val,
+:root[data-design="modernist"] .detail-hero-price .dh-paid,
+:root[data-design="modernist"] .yotd-name,
+:root[data-design="modernist"] .tile span {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}

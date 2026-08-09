@@ -4411,12 +4411,12 @@ document.querySelectorAll('#themeSeg .seg-btn').forEach((b) =>
 
 // ---- Settings: design language (independent of light/dark theme) ----
 function syncDesignSeg() {
-  const cur = document.documentElement.dataset.design || 'precision';
+  const cur = document.documentElement.dataset.design || 'organic';
   document.querySelectorAll('#designSeg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.design === cur));
 }
-// Applies and persists a design language. Sets data-design to the chosen
-// value; only [data-design="precision"] has a rule layer, so 'classic' simply
-// falls through to the base look.
+// Applies and persists a design language. Organic is the base token set in
+// styles.css; Modernist re-tokens it via themes/modernist.css under
+// [data-design="modernist"].
 function applyDesign(d) {
   document.documentElement.dataset.design = d;
   try { localStorage.setItem('yoyoDesign', d); } catch { /* ignore */ }

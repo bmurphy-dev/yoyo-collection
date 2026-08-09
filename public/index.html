@@ -11,14 +11,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Yoyo Collection</title>
   <script>
-    // Organic-teal redesign: a single light-only visual language. The old
-    // precision/classic languages and dark mode are retired for this pass —
-    // force light + design="organic" pre-paint so their overrides stay inert.
+    // Light-only for now (dark is still retired), but the design language is
+    // back to being a choice: Organic (default) or Modernist, restored from
+    // the stored preference pre-paint so there's no restyle flash.
     document.documentElement.dataset.theme = 'light';
-    document.documentElement.dataset.design = 'organic';
+    let design = 'organic';
+    try { design = localStorage.getItem('yoyoDesign') || 'organic'; } catch { /* ignore */ }
+    if (design !== 'modernist') design = 'organic';
+    document.documentElement.dataset.design = design;
   </script>
   <link rel="stylesheet" href="/fonts.css" />
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/themes/modernist.css" />
 </head>
 <body>
   <div class="app-shell">
@@ -467,8 +471,8 @@
           </div>
           <p class="fs-sub">Design language</p>
           <div class="seg" id="designSeg" role="group" aria-label="Design language">
-            <button type="button" class="seg-btn" data-design="precision">Precision</button>
-            <button type="button" class="seg-btn" data-design="classic">Classic</button>
+            <button type="button" class="seg-btn" data-design="organic">Organic</button>
+            <button type="button" class="seg-btn" data-design="modernist">Modernist</button>
           </div>
         </section>
 
