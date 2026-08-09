@@ -4393,23 +4393,9 @@ $('#restoreInput').addEventListener('change', async (e) => {
   }
 });
 
-// ---- Settings: theme (Auto follows the OS; Light/Dark force it) ----
-function syncThemeSeg() {
-  const cur = document.documentElement.dataset.theme || 'auto';
-  document.querySelectorAll('#themeSeg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.theme === cur));
-}
-// Applies and persists a theme choice ('auto' follows the OS; 'light'/'dark' force it).
-function applyTheme(t) {
-  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
-  else { delete document.documentElement.dataset.theme; t = 'auto'; }
-  try { localStorage.setItem('yoyoTheme', t); } catch { /* ignore */ }
-  syncThemeSeg();
-}
-document.querySelectorAll('#themeSeg .seg-btn').forEach((b) =>
-  b.addEventListener('click', () => applyTheme(b.dataset.theme))
-);
-
-// ---- Settings: design language (independent of light/dark theme) ----
+// ---- Settings: design language ----
+// (No light/dark control: both design languages are light-only, so the old
+// Auto/Light/Dark segment did nothing. The boot script pins data-theme="light".)
 function syncDesignSeg() {
   const cur = document.documentElement.dataset.design || 'organic';
   document.querySelectorAll('#designSeg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.design === cur));
@@ -4428,7 +4414,6 @@ document.querySelectorAll('#designSeg .seg-btn').forEach((b) =>
 
 // ---- Settings modal ----
 $('#settingsBtn').addEventListener('click', () => {
-  syncThemeSeg();
   syncDesignSeg();
   renderFieldList();
   resetAddFieldForm();

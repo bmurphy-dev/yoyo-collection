@@ -1516,8 +1516,6 @@ body.read-only #addBtn, body.read-only #settingsBtn { display: none; } /* owner-
 @media (max-width: 1000px) { .arrivals-layout { grid-template-columns: 1fr; gap: 24px; } }
 
 /* ── Loose ends ── */
-/* Retire the now-inert Appearance controls (no dark mode / single language). */
-#settingsModal .form-section:has(#themeSeg) { display: none; }
 /* Chunkier icon strokes for the rounded chrome feel (Lucide-ish). */
 .icon-btn svg, .hero-act svg, .standout-icon svg, .card-fav-btn svg, .pop-action svg,
 .dz-icon svg, .fs-icon svg, .detail-hero-actions svg, .arrival-thumb svg, .status-banner svg { stroke-width: 2.4px; }
