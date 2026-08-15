@@ -5,10 +5,10 @@
 // db.js and to carrier tracking APIs through carriers.js. No build step — this
 // runs directly with `node server.js` (see app.cjs for the CommonJS startup
 // shim some hosts require).
+import './load-env.js'; // must stay first — see the note in that file
 import express from 'express';
 import multer from 'multer';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -55,6 +55,28 @@ function cmpVersion(a, b) {
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+// Scratch space for restore: the uploaded zip, and the database extracted from
+// it. Deliberately NOT os.tmpdir() — /tmp is tmpfs (i.e. RAM) on Armbian,
+// Fedora, recent Ubuntu, and most SBC images tuned to spare an SD card, so
+// writing a 200MB upload there would put it straight back into memory and undo
+// the point of streaming it to disk at all. The database's own directory is
+// real disk by definition and already holds the collection, so it has room.
+// Not included in backups: those archive DB_PATH and UPLOAD_DIR only.
+//
+// RESTORE_TMP_DIR overrides where that scratch folder is placed, for the case
+// where the database lives on a disk too small to absorb a transient copy of
+// the backup — Render's blueprint provisions 1GB, for instance, and there the
+// upload is better off on ephemeral container storage. It names the PARENT: a
+// `restore-tmp` subdirectory is always created inside it, and the sweep below
+// only ever touches that subdirectory. Pointing this straight at /tmp must not
+// mean "delete everything in /tmp" on boot.
+const SCRATCH_DIR = path.join(process.env.RESTORE_TMP_DIR || path.dirname(DB_PATH), 'restore-tmp');
+fs.mkdirSync(SCRATCH_DIR, { recursive: true });
+// Clear anything left behind by a previous run that died mid-restore.
+for (const stale of fs.readdirSync(SCRATCH_DIR)) {
+  fs.rmSync(path.join(SCRATCH_DIR, stale), { force: true, recursive: true });
+}
 
 const app = express();
 
@@ -278,9 +300,16 @@ const uploadCsv = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
 });
 
-// Backup zips can be large (they include photos).
+// Backup zips can be large (they include photos), so the upload streams to a
+// temp file instead of being accumulated in memory. memoryStorage() held the
+// whole thing as a Buffer for the entire request — a sustained 200MB
+// allocation across what can be a multi-minute upload on a home connection,
+// held even when the file turned out not to be a valid zip, and multiplied by
+// any concurrent request. That's a lot to ask of a 2–4GB NAS or SBC.
+// (multer removes its temp file itself if the upload errors or exceeds the
+// limit; the handler below deletes it on every other path.)
 const uploadZip = multer({
-  storage: multer.memoryStorage(),
+  dest: SCRATCH_DIR,
   limits: { fileSize: 200 * 1024 * 1024 },
 });
 
@@ -1298,16 +1327,25 @@ app.get('/api/backup.zip', (req, res) => {
 // Restore REPLACES the entire collection with the contents of a backup zip.
 app.post('/api/restore', uploadZip.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No backup file uploaded.' });
+  // Every path out of here has to drop the uploaded temp file, including the
+  // early validation returns below.
+  try {
+    restoreFromZip(req.file.path, res);
+  } finally {
+    fs.rmSync(req.file.path, { force: true });
+  }
+});
 
+function restoreFromZip(zipPath, res) {
   let entries;
-  try { entries = new AdmZip(req.file.buffer).getEntries(); }
+  try { entries = new AdmZip(zipPath).getEntries(); }
   catch { return res.status(400).json({ error: 'That file is not a valid .zip backup.' }); }
 
   const dbEntry = entries.find((e) => !e.isDirectory && path.basename(e.entryName) === 'yoyos.db');
   if (!dbEntry) return res.status(400).json({ error: 'Backup is missing yoyos.db — is this a yoyo backup?' });
 
   // Open the backup DB from a temp file (read-only) and copy its rows in.
-  const tmp = path.join(os.tmpdir(), `yoyo-restore-${Date.now()}.db`);
+  const tmp = path.join(SCRATCH_DIR, `yoyo-restore-${Date.now()}.db`);
   let yoyoRows, photoRows;
   try {
     fs.writeFileSync(tmp, dbEntry.getData());
@@ -1318,7 +1356,10 @@ app.post('/api/restore', uploadZip.single('file'), (req, res) => {
   } catch (err) {
     return res.status(400).json({ error: `Could not read backup database: ${err.message}` });
   } finally {
-    fs.rmSync(tmp, { force: true });
+    // Backups are taken from a WAL database, so the copy carries WAL mode in its
+    // header and even a read-only open spawns -wal/-shm alongside it. Removing
+    // just the .db left those two behind on every restore.
+    for (const suffix of ['', '-wal', '-shm']) fs.rmSync(tmp + suffix, { force: true });
   }
 
   const yoyoCols = new Set(db.prepare('PRAGMA table_info(yoyos)').all().map((c) => c.name));
@@ -1357,7 +1398,7 @@ app.post('/api/restore', uploadZip.single('file'), (req, res) => {
   }
 
   res.json({ yoyos: yoyoRows.length, photos: photoRows.length, photoFiles });
-});
+}
 
 // ---- Multer / error handling ----
 app.use((err, _req, res, _next) => {

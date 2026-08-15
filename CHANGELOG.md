@@ -3,6 +3,52 @@
 All notable changes to this project are documented here. Every commit that
 changes app behavior gets an entry — newest first.
 
+## 2026-08-15
+- **Restore no longer buffers the whole backup in memory** — `POST /api/restore`
+  used `multer.memoryStorage()`, holding the entire upload (up to 200MB) as a
+  Buffer for the whole request: across what can be a multi-minute upload on a
+  home connection, retained even when the file turned out not to be a valid zip,
+  and multiplied by any concurrent request. Uploads now stream to a scratch
+  directory, and the handler deletes the file on every exit path — the body moved
+  into `restoreFromZip()` so a single `try/finally` covers the early validation
+  returns too. Measured on a 121MB backup: peak RSS over baseline dropped from
+  **274MB to ~190–210MB**. The remainder is `adm-zip`, which reads the whole
+  archive into a Buffer even when handed a path (`adm-zip.js` → `readFileSync`),
+  so eliminating the rest of the spike would need a streaming unzip library.
+  Backup was already stream-based and is unchanged.
+
+  The scratch directory is `restore-tmp` **next to the database**, deliberately
+  not `os.tmpdir()`: `/tmp` is tmpfs — RAM — on Armbian, Fedora, recent Ubuntu,
+  and most SBC images tuned to spare an SD card, so temp-filing a 200MB upload
+  there would have put it straight back into memory. It's swept clean at startup
+  so a crash mid-restore can't leave anything behind, and it sits outside what
+  backups archive (`DB_PATH` and `UPLOAD_DIR` only).
+
+  A new **`RESTORE_TMP_DIR`** relocates it, for when the database sits on a disk
+  too small to absorb a transient copy of the backup — `render.yaml` provisions
+  1GB, and now points this at `/tmp` so the upload uses ephemeral instance
+  storage instead. It names the *parent*: a `restore-tmp` subdirectory is always
+  created inside it and the startup sweep only touches that subdirectory, so
+  setting it to `/tmp` can't mean "empty /tmp on boot".
+- **Fix: restore left `-wal`/`-shm` files behind on every run** — the extracted
+  backup database is opened read-only, but backups are taken from a WAL database
+  so the copy carries WAL mode in its header and SQLite creates both sidecars
+  alongside it. Cleanup removed only the `.db`, so two small files leaked per
+  restore into `os.tmpdir()` — where, on a tmpfs `/tmp`, they were leaking RAM.
+- **`.env` now works when running with `node server.js`** — README and
+  `.env.example` both say to copy `.env.example` to `.env`, but there's no dotenv
+  dependency, so a plain `npm start` ignored the file entirely and silently ran
+  with defaults. A new `load-env.js` calls `process.loadEnvFile()` if the file
+  exists. It's imported first in `server.js` because `db.js` resolves `DB_PATH`
+  (and creates that directory) at import time, and ESM evaluates imports before
+  any module body — so anything later would be too late. No new dependency, and
+  no output when there's no `.env`, which is the normal case in Docker.
+- **Fix `engines` floor: `22.x` → `>=22.13`** — `node:sqlite` landed in Node 22.5
+  behind `--experimental-sqlite` and was only unflagged in **22.13.0**, so the
+  old range advertised support for 22.5–22.12, where the app can't start at all
+  (`ERR_UNKNOWN_BUILTIN_MODULE`). The Docker image was never affected; this bit
+  native installs, which the deployment guides now describe.
+
 ## 2026-08-02 (3)
 - **Dependency security updates (Dependabot)** — patched six advisories by
   bumping: **multer** → 2.2.0 (DoS via deeply nested field names; incomplete

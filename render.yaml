@@ -17,6 +17,11 @@ services:
         value: /var/data/yoyos.db
       - key: UPLOAD_DIR
         value: /var/data/uploads
+      # Restore briefly needs room for a copy of the uploaded .zip plus the
+      # database inside it. The disk below is only 1GB, so keep that transient
+      # copy off it and on the instance's ephemeral storage instead.
+      - key: RESTORE_TMP_DIR
+        value: /tmp
       # Public can view (sensitive data hidden); you log in to edit.
       # Set the actual password in the Render dashboard (Environment tab).
       - key: ADMIN_PASSWORD
