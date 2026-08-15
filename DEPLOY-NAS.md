@@ -29,7 +29,9 @@ So the app's data directory must **not** live on:
 - a **union / FUSE layer** — mergerfs on OMV, `/mnt/user` (shfs) on Unraid
 - a **network share** — NFS, SMB/CIFS, or any remote mount
 
-Use plain **ext4, XFS, btrfs, or ZFS on a local disk** — ideally an SSD.
+Use plain **ext4, XFS, btrfs, or ZFS on a local disk**. An SSD is nicer, but a
+spinning disk is completely fine — correctness depends on the filesystem, not
+the medium, and this is a personal catalog rather than a busy database.
 
 The failure mode is **silent**, which is what makes it dangerous. On an
 unsupported filesystem `PRAGMA journal_mode = WAL` is quietly ignored, nothing
@@ -78,9 +80,22 @@ a real disk, it's fine to start there and come back to this.
 On OMV, also install the **`openmediavault-flashmemory`** plugin — it uses
 folder2ram to keep logs off the boot device and exists for exactly this case.
 
-If the board has spinning disks with APM/spin-down enabled, prefer an SSD for
-the data. Otherwise the database's periodic writes either keep the disk awake or
-add spin-up latency to page loads, and the cycling wears the drive.
+### No SSD in the machine?
+
+A common NAS build — a couple of large spinners and a boot card, nothing else —
+and it's fine. Two things follow from it.
+
+**Put the data directory on a spinning disk anyway.** It's the right call: what
+matters is a real local filesystem, not the medium. The only symptom is a
+possible pause on first page load while the drive spins up. If that bothers you,
+disable APM/spin-down for that disk; the alternative is the drive staying awake,
+which is normal NAS behaviour.
+
+**It also flips the Docker-storage advice above.** With no SSD to move images
+to, leaving them on the boot flash is often the *better* choice — putting them
+on a spinner means every container start wakes a large drive, and images are
+written once and read thereafter, so they were never much of a wear risk. Data
+on the spinner, images on the flash, each medium doing what suits it.
 
 ## 2. The compose file
 
