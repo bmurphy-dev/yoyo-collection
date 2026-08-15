@@ -48,11 +48,32 @@ frequent, fsync'd writes — close to the worst case for card endurance, with no
 meaningful wear-leveling to absorb it. You get months, not years, and the
 failure takes the collection with it.
 
-Two things must live on real storage (SATA or USB3 SSD), not the card:
+**The app's data directory is the one that matters**, and the bind mount in
+[Part 1's compose file](#2-the-compose-file) is what keeps it off the card. Get
+that right and the important problem is solved.
 
-- **the app's data directory**, and
-- **Docker's storage root** (`/var/lib/docker`), which sits *on the card* by
-  default. Image layers and container writable layers churn constantly.
+**Docker's storage root** (`/var/lib/docker`) also sits on the card by default,
+and moving it is worth doing eventually — but it's second-order, not a blocker.
+Image layers are written once on pull and then read-only, and a light container
+writes little to its writable layer; the main ongoing writer is container logs,
+which OMV caps at 50 MB by default. If your data directory is bind-mounted onto
+a real disk, it's fine to start there and come back to this.
+
+> ⚠️ **On a system that already runs containers, moving Docker storage orphans
+> named volumes.** Repointing it starts Docker against an empty directory:
+> images re-pull and containers recreate, but anything in a *named* volume —
+> as opposed to a bind mount — stays behind at the old path. Several popular
+> images (Homebox among them) default to named volumes, so check first with
+> `docker volume ls`, and migrate by copying rather than repointing:
+>
+> ```bash
+> sudo systemctl stop docker
+> sudo rsync -aAXH /var/lib/docker/ /srv/dev-disk-by-uuid-XXXX/docker-storage/
+> ```
+>
+> Keep the old directory until you've confirmed everything still has its data.
+> This guide uses a bind mount specifically so *this* app is never exposed to
+> that — and so your NAS backup tooling can see the files.
 
 On OMV, also install the **`openmediavault-flashmemory`** plugin — it uses
 folder2ram to keep logs off the boot device and exists for exactly this case.
@@ -207,6 +228,23 @@ your own UI.
 **Data path:** a `yoyo-collection` folder inside the plugin's **Data** shared
 folder — typically `/srv/dev-disk-by-uuid-XXXX/data/yoyo-collection`. Step 3
 sets that up so the compose file never has to name the UUID.
+
+**Finding your own paths.** `XXXX` above is a placeholder — OMV mounts each data
+filesystem as `/srv/dev-disk-by-uuid-<its UUID>`. To see yours:
+
+```bash
+lsblk -o NAME,LABEL,FSTYPE,SIZE,ROTA,MOUNTPOINT   # ROTA=1 means a spinning disk
+ls -l /srv/                                       # just the mounted data filesystems
+```
+
+Or in the GUI: **Storage → File Systems** for devices and mountpoints, **Storage
+→ Shared Folders** for each folder's absolute path.
+
+> Note that the **OS drive is mounted at `/`, not under `/srv`** — OMV only
+> mounts data filesystems there. Its absence from those listings is normal and
+> doesn't tell you anything about where your container data lives. Check the
+> `LABEL` column instead: it's what the Settings dropdowns show in brackets,
+> as in `data [docker]`.
 
 ### 1. Enable Docker and install the plugin
 
