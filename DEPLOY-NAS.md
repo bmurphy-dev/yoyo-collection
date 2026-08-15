@@ -200,20 +200,210 @@ Only the differences. Everything in Part 1 still applies.
 
 ## OpenMediaVault
 
-Requires OMV 7 with **omv-extras** and the **openmediavault-compose** plugin
-(System → Plugins).
+Walked end to end through the GUI, since the compose plugin's flow isn't
+obvious. The other platform sections assume you can map these same steps onto
+your own UI.
 
-- **Data path:** `/srv/dev-disk-by-uuid-XXXX/appdata/yoyo-collection`
-- **Create the share:** Storage → Shared Folders → Create, name `appdata`, on
-  your ext4 SSD. Then `mkdir -p .../appdata/yoyo-collection`.
-- **Point the plugin at storage:** Services → Compose → Settings → set
-  *Docker storage* to `/srv/dev-disk-by-uuid-XXXX/docker` and *Compose files* to
-  `.../appdata/compose`. Keeping Docker off the OS drive is the wiki's standing
-  recommendation, and mandatory on an SBC.
-- **Add the stack:** Services → Compose → Files → Create, paste, then **Up**.
-- **Update:** select the file → **Pull**, then **Up**.
-- **Backups:** Services → Rsync → Jobs, source
-  `.../appdata/yoyo-collection/`, nightly.
+**Data path:** a `yoyo-collection` folder inside the plugin's **Data** shared
+folder — typically `/srv/dev-disk-by-uuid-XXXX/data/yoyo-collection`. Step 3
+sets that up so the compose file never has to name the UUID.
+
+### 1. Enable Docker and install the plugin
+
+1. **System → omv-extras** → click **DOCKER REPO**.
+2. **System → Plugins** → find **openmediavault-compose 7.x** → **Install**.
+3. On an SBC, also install **openmediavault-flashmemory** while you're here —
+   see the [microSD rule](#on-an-sbc-raspberry-pi-odroid-etc--the-microsd-rule-).
+
+A **Services → Compose** submenu appears once the plugin finishes, with a long
+list of entries (Settings, Files, Configs, Services, Ports, Stats, Images,
+Networks, Volumes, Containers, Dockerfiles, Schedule, Restore, Repos). Only two
+matter for this:
+
+- **Settings** — where the storage paths live (step 3)
+- **Files** — where you create and control the stack (steps 4–5)
+
+**Containers** is worth knowing about as well; it lists everything running, and
+is the quickest way to confirm the app came up.
+
+### 2. Create the shared folders
+
+The plugin's Settings page selects storage through **shared-folder dropdowns**,
+not free text, so these have to exist first.
+
+**Storage → Shared Folders → Create**, all on your **ext4 SSD** — not a mergerfs
+pool, not the boot device. Naming them after the plugin's own sections keeps
+things obvious:
+
+| Name | Holds |
+|---|---|
+| `compose` | the plugin's compose files |
+| `data` | persistent container data — this app's database and photos |
+| `backup` | the plugin's volume backups |
+
+(You can also create them inline from Settings using the **⊕** button beside
+each dropdown, if you'd rather not leave the page.)
+
+### 3. Point the plugin at that storage
+
+**Services → Compose → Settings**, then **Save** at the bottom.
+
+**Compose Files** → *Shared folder*: `compose`. Leave owner/group `root` and the
+default permissions alone.
+
+**Data** → *Shared folder*: `data`. Worth understanding, because it's what lets
+step 4 avoid hard-coding a disk UUID: this path substitutes for the literal
+string `CHANGE_TO_COMPOSE_DATA_PATH` in any compose file.
+
+**Backup** → *Shared folder*: `backup`, *Backend*: `rsync`.
+
+> ⚠️ **Change `Max Size` from `1` to `0`.** It's in GB, and the help text says
+> *"Backup will skip volumes larger than this size."* A photo collection passes
+> 1 GB quickly, at which point backups **silently skip it** — the job still
+> reports success. `0` means unlimited.
+
+**Docker config** → **`Docker storage`**. This is the field that matters most on
+an SBC. It defaults to `/var/lib/docker`, which is on the OS drive — the
+**microSD card** on an ODROID or Pi. Image layers and container writable layers
+churn constantly and will wear it out.
+
+Two ways to move it, and the checkbox decides which:
+
+- Tick **Use shared folder** and pick one from the dropdown beside it, or
+- leave it unticked and type a path directly, e.g.
+  `/srv/dev-disk-by-uuid-XXXX/docker`
+
+**Overrides** → tick **Run config**. Its help text is *"Run Docker Compose
+config to automatically check syntax when saving file"* — so a malformed compose
+file is caught at save time rather than failing later at start. Cheap insurance
+when you're pasting YAML into a browser.
+
+> If containers sometimes fail to start after a reboot, **`Start delay`** in
+> Docker config is the fix — it waits N seconds for storage to mount before
+> starting Docker. Relevant when appdata lives on a USB SSD or a disk that spins
+> up slowly, which is exactly the setup this guide recommends.
+
+### 4. Create the stack
+
+**Services → Compose → Files** → click the blue **+** button. It opens a menu:
+*Add*, *Add from Example*, *Add from URL*, *Autocompose*, and several Import
+options. You want the plain **Add** at the top — the others either start from a
+template or pull in an existing setup.
+
+That opens a **Create** form with three fields:
+
+- **Name** (required): `yoyo-collection`
+- **Description**: anything, or leave it blank
+- **File**: this is [Part 1's compose file](#2-the-compose-file), with the volume
+  line written the plugin's way:
+
+```yaml
+services:
+  yoyo:
+    image: ghcr.io/stammig/yoyo-collection:latest
+    container_name: yoyo-collection
+    ports:
+      - "3000:3000"
+    volumes:
+      - CHANGE_TO_COMPOSE_DATA_PATH/yoyo-collection:/data
+    environment:
+      DB_PATH: /data/yoyos.db
+      UPLOAD_DIR: /data/uploads
+    restart: unless-stopped
+```
+
+`CHANGE_TO_COMPOSE_DATA_PATH` is substituted with the **Data** shared folder you
+set in step 3, so there's no disk UUID to mistype — which matters, because a
+typo'd bind-mount path doesn't error. Docker just creates an empty directory at
+the wrong location and your collection quietly lives somewhere you'll never back
+up. Use the literal path instead if you prefer; both work.
+
+The `yoyo-collection` subfolder is created on first start, so there's nothing to
+`mkdir` by hand.
+
+Leave **Show environment file** and **Show override** unticked — neither is
+needed here. (*Show environment file* reveals an editor for a `.env` beside the
+stack, which is where an `ADMIN_PASSWORD` would go if you ever set one, rather
+than in the compose file itself.)
+
+Then **Save**. With **Run config** ticked back in step 3, the syntax is checked
+now rather than at start. The editor shows line numbers, so if it complains,
+check indentation first — YAML is whitespace-sensitive and a pasted block is the
+usual culprit.
+
+### 5. Start it
+
+Back on the Files list, **select the `yoyo-collection` row**, then click the
+**Up** button in the toolbar (the ⬆-in-a-circle icon, fourth from the left).
+The toolbar is icon-only — hover any button for its tooltip.
+
+First start pulls the image (~200 MB), so give it a minute.
+
+You'll know it worked from two columns in the list:
+
+- **Status** flips to a green **Up** pill
+- **Ports** shows `3000→3000/tcp`
+
+If it fails instead, the **Logs** button on that same toolbar gives you the
+reason.
+
+### 6. Open it
+
+**http://YOUR-OMV-IP:3000** — an empty collection, fully editable, no login.
+
+Worth setting a DHCP reservation for the NAS so the address doesn't move, or use
+its hostname if your router does local DNS.
+
+### Day-to-day
+
+All of these act on the selected row in **Services → Compose → Files** (hover
+the icon-only toolbar for tooltips):
+
+| Action | Buttons |
+|---|---|
+| Update to the latest release | **Pull**, then **Up** |
+| See what the app is logging | **Logs** |
+| Stop it | **Down** |
+| Change config | **Edit** → adjust → **Save** → **Up** |
+
+**Containers** in the sidebar is the other place to confirm it's running, and
+**Stats** shows what it's using.
+
+**Backups:** Services → **Rsync → Jobs → Create**, source
+`/srv/dev-disk-by-uuid-XXXX/data/yoyo-collection/` (your **Data** shared folder
+plus the app's subfolder), destination another disk or a remote, scheduled
+nightly.
+
+### Optional: scheduled jobs
+
+**Services → Compose → Schedule → Create** builds cron-style jobs against your
+compose stacks, which can save some clicking.
+
+- **Filter** picks which stacks the job covers by name, with wildcards and
+  comma-separated patterns — `yoyo-collection` targets just this one. (Blank or
+  `*` means every stack, which is rarely what you want.) There's a matching
+  **Exclude filter**, and dropdowns to pick files explicitly instead.
+- **Action type** offers *Maintenance*, *Container state*, and *Build*.
+- **Schedule** is the usual minute / hour / day-of-month / month / day-of-week,
+  plus *Every N* variants and a preset dropdown.
+- **Send command output via email** is worth ticking for anything unattended —
+  otherwise a job that starts failing does so silently.
+
+> ⚠️ **Think twice before scheduling automatic updates.** The compose file pulls
+> `:latest`, so an unattended pull-and-recreate means the app can change version
+> while you're not looking — on a database-backed app, with no chance to read
+> release notes or take a backup first. The app deliberately never updates
+> itself for the same reason; **Settings ⚙ → Version & updates** only *tells*
+> you when a release is out. If you do automate it, take a backup on a schedule
+> too, or pin a version tag (`:1.1.2`) instead of `:latest` and bump it
+> deliberately.
+
+The **Volume path excludes** field on that form (and the **Backup** section in
+Compose → Settings) drive the plugin's own volume backups, with `*.log, tmp/*`
+style patterns. That's an alternative to the Rsync job above — and if you pair
+it with a *Container state* action to stop the stack first, you get a snapshot
+with no chance of a torn write, which is the same trick Unraid's CA Appdata
+Backup plugin uses.
 
 ⚠️ **Avoid mergerfs.** The OMV wiki agrees: *"the file system where the docker
 folder is should preferably be EXT4"* and *"do not place the docker folder in a
