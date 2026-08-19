@@ -3,6 +3,32 @@
 All notable changes to this project are documented here. Every commit that
 changes app behavior gets an entry — newest first.
 
+## 2026-08-18
+- **360° spins and looping video** — a yoyo's gallery can now hold more than
+  stills. **Add 360° spin** takes a numbered frame sequence and renders a
+  drag-to-rotate viewer (pointer, touch, and ← / → keys); **Add video** takes a
+  short `.mp4`/`.webm` that autoplays muted on loop. Either can be dragged to
+  the front to become the cover.
+  - A spin can be handed over as loose frames **or as a single `.zip`**, which
+    the server unpacks (frames nested in a folder are fine). Archive members are
+    identified by magic bytes and re-named on the way in, and their paths are
+    ignored entirely, so a crafted entry name can't write outside `uploads/`.
+    Uses the existing `adm-zip` dependency.
+  - No new dependencies, and **no ffmpeg** — spins arrive as already-extracted
+    frames, and the browser reads a video's poster frame out via canvas before
+    upload, so the server never decodes anything.
+  - `photos` gains `kind` (`photo`/`video`/`spin`) and `group_uuid`; a spin is
+    one row per frame sharing a group, which the API collapses back into a
+    single gallery entry. Existing rows migrate to `kind = 'photo'` with no data
+    pass, and one-row-per-file means backup/restore and the sync photo manifest
+    needed no special cases.
+  - Every gallery entry's `url`/`thumbUrl` still points at a still image
+    whatever its kind, so tiles, rows, For Sale, Arrivals and Insights render
+    unchanged and a big collection loads no slower. Only the detail view and the
+    lightbox animate.
+  - Deleting a spin removes its whole frame sequence, and reordering keeps a
+    spin's frames contiguous and in sequence.
+
 ## 2026-08-02 (3)
 - **Dependency security updates (Dependabot)** — patched six advisories by
   bumping: **multer** → 2.2.0 (DoS via deeply nested field names; incomplete
