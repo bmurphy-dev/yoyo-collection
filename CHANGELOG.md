@@ -43,8 +43,11 @@ changes app behavior gets an entry — newest first.
   (and creates that directory) at import time, and ESM evaluates imports before
   any module body — so anything later would be too late. No new dependency, and
   no output when there's no `.env`, which is the normal case in Docker.
-- **Fix `engines` floor: `22.x` → `>=22.13`** — `node:sqlite` landed in Node 22.5
-  behind `--experimental-sqlite` and was only unflagged in **22.13.0**, so the
+- **Fix `engines` floor: `22.x` → `>=22.13 <23 || >=23.4`** — `node:sqlite`
+  landed in Node 22.5 behind `--experimental-sqlite` and was only unflagged in
+  **22.13.0** on the 22.x line and **23.4.0** on the 23.x line (a plain
+  `>=22.13` would wave through Node 23.0–23.3, where startup still dies with
+  `ERR_UNKNOWN_BUILTIN_MODULE`), so the
   old range advertised support for 22.5–22.12, where the app can't start at all
   (`ERR_UNKNOWN_BUILTIN_MODULE`). The Docker image was never affected; this bit
   native installs, which the deployment guides now describe.

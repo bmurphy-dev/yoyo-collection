@@ -28,7 +28,7 @@
     "dev": "node --watch server.js"
   },
   "engines": {
-    "node": ">=22.13"
+    "node": ">=22.13 <23 || >=23.4"
   },
   "dependencies": {
     "adm-zip": "^0.6.0",
