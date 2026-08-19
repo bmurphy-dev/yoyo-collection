@@ -396,7 +396,11 @@
           </header>
           <div id="videoList" class="video-list"></div>
           <div class="video-add">
-            <input type="url" id="videoUrl" placeholder="Paste a YouTube or Instagram link…" autocomplete="off" />
+            <!-- type=text on purpose: this input lives inside #yoyoForm, and a type=url
+     input fails native validation on schemeless links ("youtube.com/…" — a form
+     this feature explicitly supports), which blocked the ENTIRE yoyo save with
+     a browser bubble. Validation is parseVideoUrl's job, server-side. -->
+            <input type="text" inputmode="url" id="videoUrl" placeholder="Paste a YouTube or Instagram link…" autocomplete="off" />
             <input type="text" id="videoTitle" placeholder="Label (optional) — e.g. “Review by …”" autocomplete="off" />
             <button type="button" id="videoAddBtn" class="btn btn-ghost">Add video</button>
           </div>

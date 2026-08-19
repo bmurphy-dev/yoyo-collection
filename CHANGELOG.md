@@ -3,6 +3,24 @@
 All notable changes to this project are documented here. Every commit that
 changes app behavior gets an entry — newest first.
 
+## 2026-08-19 (2)
+- **Review fixes to the linked-videos work below** (found by an adversarial
+  review pass before merge; each was reproduced first, then fixed):
+  - The video-link box is a plain text input now. It was `type="url"` inside the
+    yoyo form, so a schemeless link left in it — `youtube.com/…`, a form the
+    feature explicitly supports — failed native validation and **blocked saving
+    the entire yoyo** with a browser bubble. Validation belongs to the server's
+    parser, which already handles schemeless links.
+  - A link left in the box when you hit **Save** is now folded into the save
+    instead of silently vanishing with the modal; if it's a bad link, the save
+    stops with everything intact and a clear message.
+  - Stored links are the **normalized absolute URL**, not the raw paste — a
+    schemeless paste used to render "Open on YouTube" as a relative link into
+    this app (a 404 on your own host).
+  - Instagram path parsing uses `Object.hasOwn` instead of `in`, which also
+    matched inherited `Object.prototype` keys — `instagram.com/constructor/…`
+    stored the stringified `Object` constructor as an embed path.
+
 ## 2026-08-19
 - **Linked videos (YouTube / Instagram)** — a yoyo can now carry links to other
   people's videos: reviews, trick videos, unboxings. Paste a link (with an

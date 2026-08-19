@@ -425,7 +425,10 @@ function parseStartSeconds(raw) {
 }
 
 // Turns a pasted link into the pieces needed to embed it, or null if it isn't a
-// supported video URL. Returns { provider, embed_ref, vertical, start_s }.
+// supported video URL. Returns { provider, embed_ref, vertical, start_s, url } —
+// `url` is the NORMALIZED absolute form (scheme guaranteed), which is what gets
+// stored: the raw pasted text may be schemeless ("youtube.com/…"), and storing
+// that verbatim rendered "Open on YouTube" as a relative link into this app.
 function parseVideoUrl(input) {
   const raw = String(input || '').trim();
   if (!raw || raw.length > 2048) return null;
@@ -452,18 +455,21 @@ function parseVideoUrl(input) {
       vertical = segs[0] === 'shorts';
     }
     if (!id || !YT_ID_RE.test(id)) return null;
-    return { provider: 'youtube', embed_ref: id, vertical, start_s: start };
+    return { provider: 'youtube', embed_ref: id, vertical, start_s: start, url: u.href };
   }
 
   if (IG_HOSTS.has(host)) {
     // Reels are also linked as /<username>/reel/<code>, so find the type
     // anywhere in the path rather than assuming it's first.
-    const at = segs.findIndex((sg) => sg.toLowerCase() in IG_TYPES);
+    // Object.hasOwn, not `in`: `in` also matches inherited Object.prototype
+    // keys, so instagram.com/constructor/<code> stored the stringified Object
+    // constructor as the embed path.
+    const at = segs.findIndex((sg) => Object.hasOwn(IG_TYPES, sg.toLowerCase()));
     if (at === -1) return null;
     const type = IG_TYPES[segs[at].toLowerCase()];
     const code = segs[at + 1];
     if (!code || !IG_CODE_RE.test(code)) return null;
-    return { provider: 'instagram', embed_ref: `${type}/${code}`, vertical: type !== 'p', start_s: 0 };
+    return { provider: 'instagram', embed_ref: `${type}/${code}`, vertical: type !== 'p', start_s: 0, url: u.href };
   }
 
   return null;
@@ -767,7 +773,7 @@ app.post('/api/yoyos/:id/videos', (req, res) => {
     db.prepare(`INSERT INTO videos (yoyo_id, uuid, provider, embed_ref, url, title, vertical, start_s, sort_order)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(req.params.id, crypto.randomUUID(), parsed.provider, parsed.embed_ref,
-        String(req.body.url).trim().slice(0, 2048), title, parsed.vertical ? 1 : 0, parsed.start_s, maxRow.m + 1);
+        parsed.url.slice(0, 2048), title, parsed.vertical ? 1 : 0, parsed.start_s, maxRow.m + 1);
     touchYoyo(req.params.id);
   })();
 
@@ -902,8 +908,8 @@ function applyVideoList(yoyoId, list) {
       uuid: v.uuid,
       sort_order: Number(v.sort_order) || 0,
       title: String(v?.title || '').trim().slice(0, 200),
-      url: String(v.url).trim().slice(0, 2048),
       ...parsed,
+      url: parsed.url.slice(0, 2048), // normalized absolute form, never the raw paste
     });
   }
   const keep = new Set(entries.map((e) => e.uuid));

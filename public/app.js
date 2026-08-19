@@ -3852,6 +3852,17 @@ function collectFormData() {
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (demoGuard()) return;
+  // A link left in the Videos box would otherwise vanish when the modal closes
+  // — fold it into the save. If it's a bad link, stop here with the form (and
+  // all its edits) intact, rather than silently discarding what was pasted.
+  const pendingVideo = editingId && $('#videoUrl') && $('#videoUrl').value.trim();
+  if (pendingVideo) {
+    const added = await addVideo();
+    if (!added) {
+      toast('Fix or clear the video link, then save again — nothing was lost.', 'error');
+      return;
+    }
+  }
   const myGen = formGen; // snapshot: detects if the form's target changes while this save is in flight
   const data = collectFormData();
 
@@ -4095,11 +4106,13 @@ function renderVideoList(videos) {
   );
 }
 
+// Returns true when the link was added (or there was nothing to add) — the
+// form's submit handler uses this to fold a pending link into Save.
 async function addVideo() {
-  if (demoGuard()) return;
-  if (!editingId) { toast('Save the yoyo first, then add a video.', 'error'); return; }
+  if (demoGuard()) return false;
+  if (!editingId) { toast('Save the yoyo first, then add a video.', 'error'); return false; }
   const url = $('#videoUrl').value.trim();
-  if (!url) { toast('Paste a YouTube or Instagram link first.', 'error'); return; }
+  if (!url) { toast('Paste a YouTube or Instagram link first.', 'error'); return false; }
   try {
     const updated = await api(`/api/yoyos/${editingId}/videos`, {
       method: 'POST',
@@ -4111,8 +4124,10 @@ async function addVideo() {
     renderVideoList(updated.videos);
     await loadAll();
     toast('Video added.');
+    return true;
   } catch (err) {
     toast(err.message, 'error');
+    return false;
   }
 }
 
