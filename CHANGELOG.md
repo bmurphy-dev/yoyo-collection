@@ -3,6 +3,34 @@
 All notable changes to this project are documented here. Every commit that
 changes app behavior gets an entry — newest first.
 
+## 2026-08-19
+- **Linked videos (YouTube / Instagram)** — a yoyo can now carry links to other
+  people's videos: reviews, trick videos, unboxings. Paste a link (with an
+  optional label) in the new **Videos** section of the add/edit form; they show
+  in their own section of the detail view.
+  - Kept **out** of the photo gallery on purpose. There are usually several per
+    yoyo and none of them should become its cover image, so they live in a new
+    `videos` table — a row has no file, and none of the list views need to know
+    they exist.
+  - **Nothing is requested from YouTube or Instagram until a visitor presses
+    play.** The card is local markup and the `<iframe>` is created on click, so a
+    public showcase page hands out no third-party cookies for videos nobody
+    watched, and a yoyo with several videos still opens instantly. YouTube is
+    embedded through `youtube-nocookie.com`.
+  - Accepts every common link shape: `watch?v=`, `youtu.be/`, **`m.youtube.com`**,
+    `music.youtube.com`, `/shorts/`, `/live/`, `/embed/`, Instagram `/p/`,
+    `/reel/` and `/tv/` (including the `/<user>/reel/<code>` form), links pasted
+    without a scheme, and app-share tracking parameters. A `t=`/`t=1m30s`
+    timestamp is preserved. Shorts and Reels get a portrait frame.
+  - Only whitelisted hosts are accepted and ids are pattern-matched, so the embed
+    URL is rebuilt from a fixed template rather than from pasted text — a
+    lookalike host like `youtube.com.evil.tld`, or a `javascript:`/`data:` URL,
+    is rejected. Because links normalise to a provider + id pair, the same video
+    pasted in two formats is detected as a duplicate.
+  - Backup/restore carries videos, and restoring a backup made *before* this
+    release still works (a missing `videos` table is an empty list, not an
+    error). Deleting a yoyo clears its video rows, including via sync push.
+
 ## 2026-08-02 (3)
 - **Dependency security updates (Dependabot)** — patched six advisories by
   bumping: **multer** → 2.2.0 (DoS via deeply nested field names; incomplete

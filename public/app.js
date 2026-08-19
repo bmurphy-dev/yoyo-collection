@@ -3063,6 +3063,7 @@ function openDetail(id, list) {
   $('#detailBody').querySelectorAll('img[data-full]').forEach((img) =>
     img.addEventListener('click', () => openLightbox(img.dataset.full))
   );
+  wireVideoCards($('#detailBody'));
   // Quick actions in the hero (owner only)
   $('#detailBody').querySelectorAll('[data-da]').forEach((b) => b.addEventListener('click', () => {
     const act = b.dataset.da;
@@ -3148,7 +3149,8 @@ function detailHTML(y) {
     ? `<section class="detail-group full"><h3>Description</h3><p class="detail-desc">${esc(y.description)}</p></section>`
     : '';
 
-  return hero + gallery + `<div class="detail-grid">${groups}${customGroup}</div>` + desc;
+  return hero + gallery + `<div class="detail-grid">${groups}${customGroup}</div>` + desc
+    + videosSectionHTML(y.videos);
 }
 
 // Open a yoyo from a /y/:id share link: a focused, read-only single-yoyo view
@@ -3566,6 +3568,7 @@ function openAdd() {
   $('#saveAddAnotherBtn').classList.remove('hidden'); // only meaningful when adding
   $('#editNav').classList.add('hidden'); // no prev/next while adding a brand-new one
   renderPhotoStrip([]);
+  renderVideoList([]);
   renderCustomFields({});
   updatePercentOff();
   syncTiles();
@@ -3605,6 +3608,7 @@ function openEdit(id, fromDetail = false, list) {
   $('#deleteBtn').classList.remove('hidden');
   $('#saveAddAnotherBtn').classList.add('hidden'); // editing an existing one
   renderPhotoStrip(y.photos);
+  renderVideoList(y.videos);
   renderCustomFields(y.custom || {});
   updatePercentOff();
   syncTiles();
@@ -3765,6 +3769,7 @@ async function persistPhotoOrder(ids) {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
     });
     renderPhotoStrip(updated.photos);
+    renderVideoList(updated.videos);
     updateHero();
     await loadAll();
   } catch (err) { toast('Could not save photo order: ' + err.message, 'error'); }
@@ -3960,6 +3965,7 @@ async function uploadFiles(fileList) {
   try {
     const updated = await api(`/api/yoyos/${editingId}/photos`, { method: 'POST', body: fd });
     renderPhotoStrip(updated.photos);
+    renderVideoList(updated.videos);
     await loadAll();
   } catch (err) {
     toast(err.message, 'error');
@@ -3986,11 +3992,151 @@ async function deletePhoto(photoId) {
     await api(`/api/photos/${photoId}`, { method: 'DELETE' });
     const y = await api(`/api/yoyos/${editingId}`);
     renderPhotoStrip(y.photos);
+    renderVideoList(y.videos);
     await loadAll();
   } catch (err) {
     toast(err.message, 'error');
   }
 }
+
+// ---- External video embeds (YouTube / Instagram) ----
+// Reference material — reviews, trick videos — kept out of the photo gallery so
+// they never take the cover slot.
+//
+// Nothing third-party is requested until the viewer presses play: the card is
+// local markup, and the <iframe> is created on click. That matters most on a
+// public showcase page, where otherwise every visitor would hand Google or Meta
+// a request (and cookies) whether or not they watched anything.
+
+const PROVIDER_ICON = {
+  youtube: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.6 7.2s-.2-1.4-.8-2c-.8-.8-1.7-.8-2.1-.9C17.2 4.1 12 4.1 12 4.1h-.1s-5.2 0-6.7.2c-.4 0-1.3.1-2.1.9-.6.6-.8 2-.8 2S2.1 8.8 2.1 10.5v1.6c0 1.6.2 3.3.2 3.3s.2 1.4.8 2c.8.8 1.8.8 2.2.9 1.6.1 6.7.2 6.7.2s5.2 0 6.7-.2c.4 0 1.3-.1 2.1-.9.6-.6.8-2 .8-2s.2-1.6.2-3.3v-1.6c0-1.7-.2-3.3-.2-3.3M9.9 14.2V8.6l6.1 2.8z"/></svg>',
+  instagram: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.2" cy="6.8" r="1.1" fill="currentColor" stroke="none"/></svg>',
+};
+
+// One click-to-play card. `embedUrl` is built server-side from a validated
+// provider + id pair, so it's never assembled from raw pasted text.
+function videoCardHTML(v) {
+  const label = v.providerLabel || v.provider;
+  const icon = PROVIDER_ICON[v.provider] || '';
+  const title = v.title || `${label} video`;
+  return `<div class="vid-card${v.vertical ? ' vertical' : ''}" data-provider="${esc(v.provider)}">
+      <button type="button" class="vid-poster" data-embed="${esc(v.embedUrl)}" data-title="${esc(title)}"
+        aria-label="Play ${esc(title)} on ${esc(label)}">
+        <span class="vid-play"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg></span>
+        <span class="vid-chip">${icon}<span>${esc(label)}</span></span>
+      </button>
+      <div class="vid-meta">
+        <span class="vid-title">${esc(title)}</span>
+        <a href="${esc(v.url)}" target="_blank" rel="noopener noreferrer nofollow" class="vid-out">Open on ${esc(label)}</a>
+      </div>
+    </div>`;
+}
+
+function videosSectionHTML(videos) {
+  if (!videos || !videos.length) return '';
+  return `<div class="detail-videos">
+      <h4 class="dv-head">${videos.length > 1 ? 'Videos' : 'Video'}</h4>
+      <div class="vid-list">${videos.map(videoCardHTML).join('')}</div>
+      <p class="hint dv-note">Videos are hosted on YouTube and Instagram — nothing loads from them until you press play.</p>
+    </div>`;
+}
+
+// Swaps a card's poster for the real player. Only ever called from a click.
+function wireVideoCards(root) {
+  root.querySelectorAll('.vid-poster').forEach((btn) => {
+    if (btn.dataset.wired) return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.vid-card');
+      const frame = document.createElement('iframe');
+      frame.src = btn.dataset.embed;
+      frame.title = btn.dataset.title;
+      frame.loading = 'lazy';
+      frame.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share';
+      frame.referrerPolicy = 'strict-origin-when-cross-origin';
+      frame.allowFullscreen = true;
+      frame.setAttribute('frameborder', '0');
+      card.classList.add('playing');
+      btn.replaceWith(frame);
+    });
+  });
+}
+
+// ---- Videos (external embeds) in the editor ----
+
+// Rows in the edit form's Videos section: provider, label, and a remove button.
+// Deliberately no embedded players here — the editor shouldn't pull third-party
+// frames while you're filling in a form.
+function renderVideoList(videos) {
+  const wrap = $('#videoList');
+  if (!wrap) return;
+  const list = videos || [];
+  $('#videoUrl').disabled = !editingId;
+  $('#videoTitle').disabled = !editingId;
+  $('#videoAddBtn').disabled = !editingId;
+  if (!editingId) {
+    wrap.innerHTML = '<p class="hint">Save first to start adding videos.</p>';
+    return;
+  }
+  wrap.innerHTML = list.length
+    ? list.map((v) => `
+      <div class="video-row" data-vid="${v.id}">
+        <span class="vr-icon ${esc(v.provider)}">${PROVIDER_ICON[v.provider] || ''}</span>
+        <span class="vr-main">
+          <span class="vr-title">${esc(v.title || `${v.providerLabel} video`)}</span>
+          <a class="vr-url" href="${esc(v.url)}" target="_blank" rel="noopener noreferrer nofollow">${esc(v.url)}</a>
+        </span>
+        <button type="button" class="video-del" data-video="${v.id}" title="Remove video">✕</button>
+      </div>`).join('')
+    : '<p class="hint">No videos yet — paste a YouTube or Instagram link below.</p>';
+
+  wrap.querySelectorAll('.video-del').forEach((btn) =>
+    btn.addEventListener('click', () => deleteVideo(Number(btn.dataset.video)))
+  );
+}
+
+async function addVideo() {
+  if (demoGuard()) return;
+  if (!editingId) { toast('Save the yoyo first, then add a video.', 'error'); return; }
+  const url = $('#videoUrl').value.trim();
+  if (!url) { toast('Paste a YouTube or Instagram link first.', 'error'); return; }
+  try {
+    const updated = await api(`/api/yoyos/${editingId}/videos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, title: $('#videoTitle').value.trim() }),
+    });
+    $('#videoUrl').value = '';
+    $('#videoTitle').value = '';
+    renderVideoList(updated.videos);
+    await loadAll();
+    toast('Video added.');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function deleteVideo(videoId) {
+  if (demoGuard()) return;
+  try {
+    await api(`/api/videos/${videoId}`, { method: 'DELETE' });
+    const y = await api(`/api/yoyos/${editingId}`);
+    renderVideoList(y.videos);
+    await loadAll();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+$('#videoAddBtn').addEventListener('click', addVideo);
+// Enter in either field adds, rather than submitting (and closing) the whole form.
+['#videoUrl', '#videoTitle'].forEach((sel) =>
+  $(sel).addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    addVideo();
+  })
+);
 
 // ---- Lightbox ----
 function openLightbox(url) {

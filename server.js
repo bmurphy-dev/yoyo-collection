@@ -396,6 +396,113 @@ async function makeThumb(filename) {
     .toFile(out);
 }
 
+// ---- External video embeds (YouTube / Instagram) ----
+
+// Hosts we'll accept a link from. Anything else is rejected outright rather than
+// guessed at, so a pasted tracking-redirect URL doesn't become an iframe.
+const YT_HOSTS = new Set([
+  'youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com',
+  'youtube-nocookie.com', 'www.youtube-nocookie.com',
+  'youtu.be', 'www.youtu.be',
+]);
+const IG_HOSTS = new Set(['instagram.com', 'www.instagram.com', 'm.instagram.com']);
+
+const YT_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+const IG_CODE_RE = /^[A-Za-z0-9_-]{5,32}$/;
+// Instagram serves the same shortcode under a few path prefixes; keep whichever
+// one was pasted, because that's the path its /embed endpoint expects.
+const IG_TYPES = { p: 'p', reel: 'reel', reels: 'reel', tv: 'tv' };
+
+// "90", "1m30s", "2h3m4s" -> seconds. YouTube accepts all of these in `t`.
+function parseStartSeconds(raw) {
+  if (!raw) return 0;
+  const v = String(raw).trim();
+  if (/^\d+$/.test(v)) return Math.min(Number(v), 86400);
+  const m = v.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/i);
+  if (!m || !m.slice(1).some(Boolean)) return 0;
+  const secs = Number(m[1] || 0) * 3600 + Number(m[2] || 0) * 60 + Number(m[3] || 0);
+  return Math.min(secs, 86400);
+}
+
+// Turns a pasted link into the pieces needed to embed it, or null if it isn't a
+// supported video URL. Returns { provider, embed_ref, vertical, start_s }.
+function parseVideoUrl(input) {
+  const raw = String(input || '').trim();
+  if (!raw || raw.length > 2048) return null;
+  let u;
+  // Tolerate a link copied without its scheme ("youtube.com/watch?v=...").
+  try { u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`); }
+  catch { return null; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+
+  const host = u.hostname.toLowerCase();
+  const segs = u.pathname.split('/').filter(Boolean);
+
+  if (YT_HOSTS.has(host)) {
+    const start = parseStartSeconds(u.searchParams.get('t') || u.searchParams.get('start'));
+    // youtu.be/<id> puts the id in the path; every youtube.com form either uses
+    // ?v= or a known path prefix.
+    let id = null, vertical = false;
+    if (host === 'youtu.be' || host === 'www.youtu.be') {
+      id = segs[0] || null;
+    } else if (segs[0] === 'watch') {
+      id = u.searchParams.get('v');
+    } else if (['shorts', 'embed', 'live', 'v'].includes(segs[0])) {
+      id = segs[1] || null;
+      vertical = segs[0] === 'shorts';
+    }
+    if (!id || !YT_ID_RE.test(id)) return null;
+    return { provider: 'youtube', embed_ref: id, vertical, start_s: start };
+  }
+
+  if (IG_HOSTS.has(host)) {
+    // Reels are also linked as /<username>/reel/<code>, so find the type
+    // anywhere in the path rather than assuming it's first.
+    const at = segs.findIndex((sg) => sg.toLowerCase() in IG_TYPES);
+    if (at === -1) return null;
+    const type = IG_TYPES[segs[at].toLowerCase()];
+    const code = segs[at + 1];
+    if (!code || !IG_CODE_RE.test(code)) return null;
+    return { provider: 'instagram', embed_ref: `${type}/${code}`, vertical: type !== 'p', start_s: 0 };
+  }
+
+  return null;
+}
+
+// Rebuilds the embed URL from the stored (already-validated) pair. The player is
+// only ever created after the viewer clicks, so nothing here is requested on load.
+function buildEmbedUrl(v) {
+  if (v.provider === 'youtube') {
+    // youtube-nocookie keeps Google from setting tracking cookies for viewers
+    // who do press play.
+    const qs = new URLSearchParams({ autoplay: '1', rel: '0', playsinline: '1' });
+    if (v.start_s > 0) qs.set('start', String(v.start_s));
+    return `https://www.youtube-nocookie.com/embed/${v.embed_ref}?${qs}`;
+  }
+  if (v.provider === 'instagram') return `https://www.instagram.com/${v.embed_ref}/embed`;
+  return null;
+}
+
+const PROVIDER_LABELS = { youtube: 'YouTube', instagram: 'Instagram' };
+
+function videosFor(yoyoId) {
+  return db
+    .prepare('SELECT * FROM videos WHERE yoyo_id = ? ORDER BY sort_order, id')
+    .all(yoyoId)
+    .map((v) => ({
+      id: v.id,
+      uuid: v.uuid,
+      provider: v.provider,
+      providerLabel: PROVIDER_LABELS[v.provider] || v.provider,
+      title: v.title,
+      url: v.url,
+      embedUrl: buildEmbedUrl(v),
+      vertical: !!v.vertical,
+      start_s: v.start_s,
+    }))
+    .filter((v) => v.embedUrl); // a row whose provider we no longer build for
+}
+
 // Expands a raw `yoyos` row into the shape the API/client expects: attaches
 // its photos (in sort order, as URLs), parses the `custom` JSON blob back into
 // an object, and adds the computed `percent_off`.
@@ -406,7 +513,7 @@ function decorate(yoyo) {
     .map((p) => ({ id: p.id, uuid: p.uuid, url: `/uploads/${p.filename}`, thumbUrl: `/uploads/${thumbName(p.filename)}` }));
   let custom = {};
   try { custom = JSON.parse(yoyo.custom || '{}'); } catch { /* ignore bad JSON */ }
-  return { ...yoyo, custom, percent_off: percentOff(yoyo), photos };
+  return { ...yoyo, custom, percent_off: percentOff(yoyo), photos, videos: videosFor(yoyo.id) };
 }
 
 // ---- Custom fields ----
@@ -559,6 +666,7 @@ app.delete('/api/yoyos/:id', (req, res) => {
   // to other devices on sync, rather than re-appearing from a device that still has it.
   db.transaction(() => {
     db.prepare('DELETE FROM photos WHERE yoyo_id = ?').run(req.params.id);
+    db.prepare('DELETE FROM videos WHERE yoyo_id = ?').run(req.params.id);
     db.prepare("UPDATE yoyos SET deleted_at = datetime('now'), updated_at = datetime('now'), rev = ? WHERE id = ?")
       .run(nextRev(), req.params.id);
   })();
@@ -636,6 +744,46 @@ app.put('/api/yoyos/:id/photos/order', (req, res) => {
   res.json(decorate(db.prepare('SELECT * FROM yoyos WHERE id = ?').get(req.params.id)));
 });
 
+// ---- API: external video embeds ----
+
+app.post('/api/yoyos/:id/videos', (req, res) => {
+  const yoyo = db.prepare('SELECT id FROM yoyos WHERE id = ? AND deleted_at IS NULL').get(req.params.id);
+  if (!yoyo) return res.status(404).json({ error: 'Not found' });
+
+  const parsed = parseVideoUrl(req.body?.url);
+  if (!parsed) {
+    return res.status(400).json({
+      error: 'Paste a YouTube or Instagram link (youtube.com, m.youtube.com, youtu.be, or instagram.com).',
+    });
+  }
+  const title = String(req.body?.title || '').trim().slice(0, 200);
+
+  const dupe = db.prepare('SELECT id FROM videos WHERE yoyo_id = ? AND provider = ? AND embed_ref = ?')
+    .get(req.params.id, parsed.provider, parsed.embed_ref);
+  if (dupe) return res.status(409).json({ error: 'That video is already on this yoyo.' });
+
+  const maxRow = db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM videos WHERE yoyo_id = ?').get(req.params.id);
+  db.transaction(() => {
+    db.prepare(`INSERT INTO videos (yoyo_id, uuid, provider, embed_ref, url, title, vertical, start_s, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(req.params.id, crypto.randomUUID(), parsed.provider, parsed.embed_ref,
+        String(req.body.url).trim().slice(0, 2048), title, parsed.vertical ? 1 : 0, parsed.start_s, maxRow.m + 1);
+    touchYoyo(req.params.id);
+  })();
+
+  res.status(201).json(decorate(db.prepare('SELECT * FROM yoyos WHERE id = ?').get(req.params.id)));
+});
+
+app.delete('/api/videos/:videoId', (req, res) => {
+  const video = db.prepare('SELECT * FROM videos WHERE id = ?').get(req.params.videoId);
+  if (!video) return res.status(404).json({ error: 'Not found' });
+  db.transaction(() => {
+    db.prepare('DELETE FROM videos WHERE id = ?').run(req.params.videoId);
+    touchYoyo(video.yoyo_id);
+  })();
+  res.json({ ok: true });
+});
+
 // ---- API: sync (native apps) ----
 // Hub-and-spoke sync: apps pull rows changed since a rev cursor (tombstones
 // included), push batched uuid-keyed upserts resolved by last-writer-wins on
@@ -694,7 +842,7 @@ app.get('/api/sync/changes', (req, res) => {
       url: `/uploads/${p.filename}`,
       thumb_url: `/uploads/${thumbName(p.filename)}`,
     }));
-    return { ...r, custom, photos };
+    return { ...r, custom, photos, videos: r.deleted_at ? [] : videosFor(r.id) };
   });
 
   res.json({
@@ -742,6 +890,41 @@ function applyPhotoManifest(yoyoId, manifest) {
   return missing;
 }
 
+// Reconciles a live yoyo's video rows against a pushed list, mirroring
+// applyPhotoManifest. Videos carry no files, so there's nothing to report back.
+function applyVideoList(yoyoId, list) {
+  const entries = [];
+  for (const v of Array.isArray(list) ? list : []) {
+    if (!UUID_RE.test(String(v?.uuid || ''))) continue;
+    const parsed = parseVideoUrl(v?.url);
+    if (!parsed) continue; // unsupported or malformed link — don't store it
+    entries.push({
+      uuid: v.uuid,
+      sort_order: Number(v.sort_order) || 0,
+      title: String(v?.title || '').trim().slice(0, 200),
+      url: String(v.url).trim().slice(0, 2048),
+      ...parsed,
+    });
+  }
+  const keep = new Set(entries.map((e) => e.uuid));
+  for (const row of db.prepare('SELECT id, uuid FROM videos WHERE yoyo_id = ?').all(yoyoId)) {
+    if (!keep.has(row.uuid)) db.prepare('DELETE FROM videos WHERE id = ?').run(row.id);
+  }
+  for (const e of entries) {
+    const row = db.prepare('SELECT * FROM videos WHERE uuid = ?').get(e.uuid);
+    if (row) {
+      if (row.yoyo_id !== yoyoId) continue; // uuid belongs to another yoyo — ignore
+      db.prepare(`UPDATE videos SET provider = ?, embed_ref = ?, url = ?, title = ?,
+        vertical = ?, start_s = ?, sort_order = ? WHERE id = ?`)
+        .run(e.provider, e.embed_ref, e.url, e.title, e.vertical ? 1 : 0, e.start_s, e.sort_order, row.id);
+    } else {
+      db.prepare(`INSERT INTO videos (yoyo_id, uuid, provider, embed_ref, url, title, vertical, start_s, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(yoyoId, e.uuid, e.provider, e.embed_ref, e.url, e.title, e.vertical ? 1 : 0, e.start_s, e.sort_order);
+    }
+  }
+}
+
 app.post('/api/sync/push', (req, res) => {
   const incoming = Array.isArray(req.body?.yoyos) ? req.body.yoyos : null;
   if (!incoming) return res.status(400).json({ error: 'Body must be { yoyos: [...] }.' });
@@ -779,11 +962,13 @@ app.post('/api/sync/push', (req, res) => {
             fs.rm(path.join(UPLOAD_DIR, thumbName(p.filename)), { force: true }, () => {});
           }
           db.prepare('DELETE FROM photos WHERE yoyo_id = ?').run(existing.id);
+          db.prepare('DELETE FROM videos WHERE yoyo_id = ?').run(existing.id);
         }
         const rev = nextRev();
         db.prepare(SYNC_UPDATE_SQL).run({ ...y, updated_at: updatedAt, deleted_at: deletedAt, rev, id: existing.id });
         const missingPhotos = (!deletedAt && rec.photos !== undefined)
           ? applyPhotoManifest(existing.id, rec.photos) : [];
+        if (!deletedAt && rec.videos !== undefined) applyVideoList(existing.id, rec.videos);
         results.push({ uuid, applied: true, rev, missingPhotos });
       } else {
         // New to the server. Tombstones insert too: a device that still holds
@@ -794,6 +979,7 @@ app.post('/api/sync/push', (req, res) => {
         });
         const missingPhotos = (!deletedAt && rec.photos !== undefined)
           ? applyPhotoManifest(info.lastInsertRowid, rec.photos) : [];
+        if (!deletedAt && rec.videos !== undefined) applyVideoList(info.lastInsertRowid, rec.videos);
         results.push({ uuid, applied: true, rev, missingPhotos });
       }
     }
@@ -1308,12 +1494,16 @@ app.post('/api/restore', uploadZip.single('file'), (req, res) => {
 
   // Open the backup DB from a temp file (read-only) and copy its rows in.
   const tmp = path.join(os.tmpdir(), `yoyo-restore-${Date.now()}.db`);
-  let yoyoRows, photoRows;
+  let yoyoRows, photoRows, videoRows;
   try {
     fs.writeFileSync(tmp, dbEntry.getData());
     const src = openDatabase(tmp, { readOnly: true });
     yoyoRows = src.prepare('SELECT * FROM yoyos').all();
     photoRows = src.prepare('SELECT * FROM photos').all();
+    // A backup taken before video embeds existed has no such table; that's an
+    // empty list, not a broken backup.
+    try { videoRows = src.prepare('SELECT * FROM videos').all(); }
+    catch { videoRows = []; }
     src.close();
   } catch (err) {
     return res.status(400).json({ error: `Could not read backup database: ${err.message}` });
@@ -1323,6 +1513,7 @@ app.post('/api/restore', uploadZip.single('file'), (req, res) => {
 
   const yoyoCols = new Set(db.prepare('PRAGMA table_info(yoyos)').all().map((c) => c.name));
   const photoCols = new Set(db.prepare('PRAGMA table_info(photos)').all().map((c) => c.name));
+  const videoCols = new Set(db.prepare('PRAGMA table_info(videos)').all().map((c) => c.name));
   const insertFrom = (table, cols, row) => {
     const keys = Object.keys(row).filter((k) => cols.has(k));
     db.prepare(`INSERT INTO ${table} (${keys.join(', ')}) VALUES (${keys.map((k) => `@${k}`).join(', ')})`)
@@ -1330,9 +1521,10 @@ app.post('/api/restore', uploadZip.single('file'), (req, res) => {
   };
 
   db.transaction(() => {
-    db.prepare('DELETE FROM yoyos').run(); // cascades to photos
+    db.prepare('DELETE FROM yoyos').run(); // cascades to photos and videos
     for (const r of yoyoRows) insertFrom('yoyos', yoyoCols, r);
     for (const p of photoRows) insertFrom('photos', photoCols, p);
+    for (const v of videoRows) insertFrom('videos', videoCols, v);
     // Restored rows carry stale or absent revs; re-stamp every row with a fresh
     // change-feed position so sync clients re-pull the whole (replaced)
     // collection. Photo files still match by uuid, so blobs aren't re-fetched.
@@ -1356,7 +1548,7 @@ app.post('/api/restore', uploadZip.single('file'), (req, res) => {
     photoFiles++;
   }
 
-  res.json({ yoyos: yoyoRows.length, photos: photoRows.length, photoFiles });
+  res.json({ yoyos: yoyoRows.length, photos: photoRows.length, videos: videoRows.length, photoFiles });
 });
 
 // ---- Multer / error handling ----
