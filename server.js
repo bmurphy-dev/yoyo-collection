@@ -1634,8 +1634,16 @@ app.post('/api/restore', uploadZip.single('file'), (req, res) => {
   const photoCols = new Set(db.prepare('PRAGMA table_info(photos)').all().map((c) => c.name));
   const insertFrom = (table, cols, row) => {
     const keys = Object.keys(row).filter((k) => cols.has(k));
+    // Bind only the columns this schema actually has. The column list was already
+    // filtered, but `row` still carries every column the backup had — and a
+    // parameter with no placeholder is an error, not something node:sqlite
+    // ignores (see the note in db.js). Passing the whole row therefore failed the
+    // *entire* restore of any backup written by a newer version, rather than
+    // dropping the one column this build doesn't know about.
+    const params = {};
+    for (const k of keys) params[k] = row[k];
     db.prepare(`INSERT INTO ${table} (${keys.join(', ')}) VALUES (${keys.map((k) => `@${k}`).join(', ')})`)
-      .run(row);
+      .run(params);
   };
 
   db.transaction(() => {

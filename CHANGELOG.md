@@ -4,6 +4,18 @@ All notable changes to this project are documented here. Every commit that
 changes app behavior gets an entry — newest first.
 
 ## 2026-08-19
+- **Restore no longer refuses a backup that has columns this version doesn't
+  know** — `insertFrom` filtered the *column list* it built the INSERT from, but
+  still passed the whole backup row as parameters, and a parameter with no
+  placeholder is an error rather than something `node:sqlite` ignores. So
+  restoring a backup written by a newer version failed outright
+  (`Unknown named parameter 'kind'`) instead of dropping the one column it
+  couldn't map. The surrounding transaction rolls back, so no collection was
+  ever lost — the restore was simply refused. Now only known columns are bound.
+  (`db.js` carried a comment claiming extra keys are ignored; the API that would
+  do that, `setAllowUnknownNamedParameters`, isn't present on the Node versions
+  this app supports, so the optional-call silently does nothing. Comment
+  corrected — this is what made the assumption look safe.)
 - **Two fixes to the 360°/video media work below** —
   - `/api/sync/changes` was sending each photo without its `kind` or
     `group_uuid`, so a sync client would have rendered a 360 spin as N loose

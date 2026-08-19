@@ -29,8 +29,11 @@ export function openDatabase(file, opts = {}) {
 
   const prepare = (sql) => {
     const stmt = raw.prepare(sql);
-    // Match better-sqlite3's object binding: keys like { id } bind to @id / :id,
-    // and extra keys that don't map to a placeholder are ignored.
+    // Match better-sqlite3's object binding: keys like { id } bind to @id / :id.
+    // The optional-call on the second one is load-bearing: setAllowUnknownNamedParameters
+    // only exists on newer node:sqlite builds, so on the Node versions this app
+    // supports it silently does nothing and an extra key WILL throw. Callers must
+    // pass only keys the statement has placeholders for — don't rely on this line.
     stmt.setAllowBareNamedParameters?.(true);
     stmt.setAllowUnknownNamedParameters?.(true);
     return stmt;
