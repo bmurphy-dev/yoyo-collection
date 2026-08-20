@@ -536,6 +536,45 @@ async function fetchVidThumb(provider, embedRef) {
   }
 }
 
+// The video's real title, for cards where the owner didn't type one. Same
+// server-side single-fetch pattern as the posters: YouTube's oEmbed endpoint
+// needs no API key, and Instagram's requires an access token, so IG cards
+// keep their generic label.
+async function fetchVideoTitle(provider, embedRef) {
+  if (provider !== 'youtube') return '';
+  try {
+    const watch = encodeURIComponent(`https://www.youtube.com/watch?v=${embedRef}`);
+    const res = await fetch(`https://www.youtube.com/oembed?format=json&url=${watch}`,
+      { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return '';
+    const meta = await res.json();
+    return String(meta?.title || '').trim().slice(0, 200);
+  } catch {
+    return '';
+  }
+}
+
+// Fills in titles for videos saved without one (rows that predate this
+// feature, or oEmbed being unreachable at add time). The parent gets a
+// rev-only bump — same as the sync photo-bytes path — so other devices
+// re-pull the row without this looking like a user edit.
+async function backfillVideoTitles() {
+  const rows = db.prepare(
+    "SELECT id, yoyo_id, provider, embed_ref FROM videos WHERE provider = 'youtube' AND (title IS NULL OR title = '')"
+  ).all();
+  let filled = 0;
+  for (const r of rows) {
+    const title = await fetchVideoTitle(r.provider, r.embed_ref);
+    if (!title) continue;
+    db.transaction(() => {
+      db.prepare('UPDATE videos SET title = ? WHERE id = ?').run(title, r.id);
+      db.prepare('UPDATE yoyos SET rev = ? WHERE id = ?').run(nextRev(), r.yoyo_id);
+    })();
+    filled++;
+  }
+  if (filled) console.log(`video titles: filled ${filled} from oEmbed`);
+}
+
 // Self-heal: videos that predate the cache (or arrived while offline) get
 // their poster fetched in the background the first time something renders
 // them; the page that triggered it just shows the placeholder once.
@@ -830,7 +869,8 @@ app.post('/api/yoyos/:id/videos', async (req, res) => {
       error: 'Paste a YouTube or Instagram link (youtube.com, m.youtube.com, youtu.be, or instagram.com).',
     });
   }
-  const title = String(req.body?.title || '').trim().slice(0, 200);
+  let title = String(req.body?.title || '').trim().slice(0, 200);
+  if (!title) title = await fetchVideoTitle(parsed.provider, parsed.embed_ref);
 
   const dupe = db.prepare('SELECT id FROM videos WHERE yoyo_id = ? AND provider = ? AND embed_ref = ?')
     .get(req.params.id, parsed.provider, parsed.embed_ref);
@@ -1006,9 +1046,10 @@ function applyVideoList(yoyoId, list) {
   // Outside-the-transaction work: posters are a cache, so fetch/cleanup can
   // safely run after commit — queueVidThumb never throws and cleanup re-checks
   // the table before removing a file.
-  setImmediate(() => {
+  setImmediate(async () => {
     for (const e of entries) queueVidThumb(e.provider, e.embed_ref);
     cleanupVidThumbs(removed);
+    if (entries.some((e) => !e.title)) await backfillVideoTitles().catch(() => {});
   });
 }
 
@@ -1646,6 +1687,9 @@ app.use((err, _req, res, _next) => {
 
 const server = app.listen(PORT, () => {
   console.log(`🪀  Yoyo collection running at http://localhost:${PORT}`);
+  // Heal quietly after boot: titles for videos saved before oEmbed lookups
+  // existed (posters self-heal lazily on render instead).
+  setImmediate(() => backfillVideoTitles().catch((e) => console.warn('title backfill:', e.message)));
 });
 
 server.on('error', (err) => {

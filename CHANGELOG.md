@@ -20,6 +20,11 @@ changes app behavior gets an entry — newest first.
   - Instagram path parsing uses `Object.hasOwn` instead of `in`, which also
     matched inherited `Object.prototype` keys — `instagram.com/constructor/…`
     stored the stringified `Object` constructor as an embed path.
+- **Untitled videos now caption themselves with the real video title**, fetched
+  once server-side from YouTube's keyless oEmbed endpoint when a video is added
+  without a title (a typed title always wins). Existing blank-title rows are
+  filled in quietly at boot. Instagram's oEmbed requires an API token, so IG
+  cards keep the generic label.
 - **Cards now show the real video thumbnail** (feedback from device testing —
   the placeholder-only cards read as broken). The server fetches YouTube's
   thumbnail once per video and serves it from `uploads/` like any other image,
