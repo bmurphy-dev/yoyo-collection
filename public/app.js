@@ -1411,7 +1411,13 @@ async function bulkDuplicate() {
     if (!y) { fail++; continue; }
     // Copy every field except identity/derived ones; photos are per-yoyo files
     // and don't carry over. Tag the model so the copy is easy to spot.
-    const { id: _id, created_at, updated_at, percent_off, photos, ...copy } = y;
+    //
+    // uuid is dropped explicitly. The server mints a fresh one on POST and
+    // ignores whatever arrives, so this is belt-and-braces — but a duplicate
+    // that carries the original's uuid is exactly the payload that would break
+    // the unique index and every client keyed on that id, and it should not be
+    // travelling at all.
+    const { id: _id, uuid, created_at, updated_at, percent_off, photos, ...copy } = y;
     copy.model = `${(y.model || '').trim()} (copy)`.trim();
     try {
       await api('/api/yoyos', {
