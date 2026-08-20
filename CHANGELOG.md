@@ -20,6 +20,14 @@ changes app behavior gets an entry — newest first.
   - Instagram path parsing uses `Object.hasOwn` instead of `in`, which also
     matched inherited `Object.prototype` keys — `instagram.com/constructor/…`
     stored the stringified `Object` constructor as an embed path.
+- **Cards now show the real video thumbnail** (feedback from device testing —
+  the placeholder-only cards read as broken). The server fetches YouTube's
+  thumbnail once per video and serves it from `uploads/` like any other image,
+  so viewers' browsers still make zero third-party requests before pressing
+  play. Fetched at add time, self-healing in the background for videos that
+  predate the cache, refcounted on delete (two yoyos sharing a video share one
+  cached file). Instagram publishes no tokenless thumbnail endpoint, so IG
+  cards keep the local placeholder.
 
 ## 2026-08-19
 - **Linked videos (YouTube / Instagram)** — a yoyo can now carry links to other

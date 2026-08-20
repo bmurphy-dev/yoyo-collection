@@ -4030,10 +4030,13 @@ function videoCardHTML(v) {
   const label = v.providerLabel || v.provider;
   const icon = PROVIDER_ICON[v.provider] || '';
   const title = v.title || `${label} video`;
+  // posterUrl is the server's locally-cached copy of the provider thumbnail —
+  // same-origin, so the "nothing loads from them until play" promise holds.
+  const poster = v.posterUrl ? `<img class="vid-thumb" src="${esc(v.posterUrl)}" alt="" loading="lazy" onerror="this.remove()" />` : '';
   return `<div class="vid-card${v.vertical ? ' vertical' : ''}" data-provider="${esc(v.provider)}">
-      <button type="button" class="vid-poster" data-embed="${esc(v.embedUrl)}" data-title="${esc(title)}"
+      <button type="button" class="vid-poster${v.posterUrl ? ' has-thumb' : ''}" data-embed="${esc(v.embedUrl)}" data-title="${esc(title)}"
         aria-label="Play ${esc(title)} on ${esc(label)}">
-        <span class="vid-play"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg></span>
+        ${poster}<span class="vid-play"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg></span>
         <span class="vid-chip">${icon}<span>${esc(label)}</span></span>
       </button>
       <div class="vid-meta">

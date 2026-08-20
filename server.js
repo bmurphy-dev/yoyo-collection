@@ -491,6 +491,68 @@ function buildEmbedUrl(v) {
 
 const PROVIDER_LABELS = { youtube: 'YouTube', instagram: 'Instagram' };
 
+// ---- Cached video posters ----
+// The placeholder cards deliberately make no third-party requests, which left
+// them as blank boxes. Instead of loading YouTube's thumbnail in the viewer's
+// browser (which would leak every visit to Google before any consent), the
+// SERVER fetches it once per video and serves it from uploads/ like any other
+// image — viewers still touch YouTube only when they press play. The filename
+// is derived from the video identity, so rows never need a poster column and
+// backup/restore carries the file with no special case. Instagram publishes no
+// tokenless thumbnail endpoint, so IG cards keep the placeholder.
+function vidThumbName(provider, embedRef) {
+  const key = crypto.createHash('sha256').update(`${provider}:${embedRef}`).digest('hex').slice(0, 24);
+  return `vidthumb-${key}.jpg`;
+}
+
+function vidThumbSource(provider, embedRef) {
+  // hqdefault exists for every YouTube video (maxresdefault does not).
+  if (provider === 'youtube') return `https://i.ytimg.com/vi/${embedRef}/hqdefault.jpg`;
+  return null;
+}
+
+// Failures are remembered for the life of the process so a dead network isn't
+// re-probed on every render (a restart naturally retries). Successes are NOT —
+// the file on disk is the record, so a poster that goes missing is re-fetched.
+const vidThumbFailed = new Set();
+async function fetchVidThumb(provider, embedRef) {
+  const src = vidThumbSource(provider, embedRef);
+  if (!src) return false;
+  const name = vidThumbName(provider, embedRef);
+  const dest = path.join(UPLOAD_DIR, name);
+  if (fs.existsSync(dest)) return true;
+  if (vidThumbFailed.has(name)) return false;
+  try {
+    const res = await fetch(src, { signal: AbortSignal.timeout(5000), redirect: 'follow' });
+    if (!res.ok || !String(res.headers.get('content-type') || '').startsWith('image/')) { vidThumbFailed.add(name); return false; }
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (!buf.length || buf.length > 2 * 1024 * 1024) { vidThumbFailed.add(name); return false; }
+    fs.writeFileSync(dest, buf);
+    return true;
+  } catch (e) {
+    vidThumbFailed.add(name);
+    console.warn(`video poster fetch failed (${provider} ${embedRef}):`, e.message);
+    return false;
+  }
+}
+
+// Self-heal: videos that predate the cache (or arrived while offline) get
+// their poster fetched in the background the first time something renders
+// them; the page that triggered it just shows the placeholder once.
+function queueVidThumb(provider, embedRef) {
+  fetchVidThumb(provider, embedRef).catch(() => {});
+}
+
+// Removes a deleted video's cached poster — unless another row (any yoyo)
+// still shows the same video.
+function cleanupVidThumbs(rows) {
+  for (const v of rows) {
+    const left = db.prepare('SELECT COUNT(*) AS c FROM videos WHERE provider = ? AND embed_ref = ?')
+      .get(v.provider, v.embed_ref).c;
+    if (left === 0) fs.rm(path.join(UPLOAD_DIR, vidThumbName(v.provider, v.embed_ref)), { force: true }, () => {});
+  }
+}
+
 function videosFor(yoyoId) {
   return db
     .prepare('SELECT * FROM videos WHERE yoyo_id = ? ORDER BY sort_order, id')
@@ -503,6 +565,12 @@ function videosFor(yoyoId) {
       title: v.title,
       url: v.url,
       embedUrl: buildEmbedUrl(v),
+      posterUrl: (() => {
+        const name = vidThumbName(v.provider, v.embed_ref);
+        if (fs.existsSync(path.join(UPLOAD_DIR, name))) return `/uploads/${name}`;
+        queueVidThumb(v.provider, v.embed_ref);
+        return null;
+      })(),
       vertical: !!v.vertical,
       start_s: v.start_s,
     }))
@@ -752,7 +820,7 @@ app.put('/api/yoyos/:id/photos/order', (req, res) => {
 
 // ---- API: external video embeds ----
 
-app.post('/api/yoyos/:id/videos', (req, res) => {
+app.post('/api/yoyos/:id/videos', async (req, res) => {
   const yoyo = db.prepare('SELECT id FROM yoyos WHERE id = ? AND deleted_at IS NULL').get(req.params.id);
   if (!yoyo) return res.status(404).json({ error: 'Not found' });
 
@@ -777,6 +845,10 @@ app.post('/api/yoyos/:id/videos', (req, res) => {
     touchYoyo(req.params.id);
   })();
 
+  // Cache the poster before responding so the card renders with it
+  // immediately; a failed fetch just means the placeholder until self-heal.
+  await fetchVidThumb(parsed.provider, parsed.embed_ref);
+
   res.status(201).json(decorate(db.prepare('SELECT * FROM yoyos WHERE id = ?').get(req.params.id)));
 });
 
@@ -787,6 +859,7 @@ app.delete('/api/videos/:videoId', (req, res) => {
     db.prepare('DELETE FROM videos WHERE id = ?').run(req.params.videoId);
     touchYoyo(video.yoyo_id);
   })();
+  cleanupVidThumbs([video]);
   res.json({ ok: true });
 });
 
@@ -913,8 +986,9 @@ function applyVideoList(yoyoId, list) {
     });
   }
   const keep = new Set(entries.map((e) => e.uuid));
-  for (const row of db.prepare('SELECT id, uuid FROM videos WHERE yoyo_id = ?').all(yoyoId)) {
-    if (!keep.has(row.uuid)) db.prepare('DELETE FROM videos WHERE id = ?').run(row.id);
+  const removed = [];
+  for (const row of db.prepare('SELECT id, uuid, provider, embed_ref FROM videos WHERE yoyo_id = ?').all(yoyoId)) {
+    if (!keep.has(row.uuid)) { removed.push(row); db.prepare('DELETE FROM videos WHERE id = ?').run(row.id); }
   }
   for (const e of entries) {
     const row = db.prepare('SELECT * FROM videos WHERE uuid = ?').get(e.uuid);
@@ -929,6 +1003,13 @@ function applyVideoList(yoyoId, list) {
         .run(yoyoId, e.uuid, e.provider, e.embed_ref, e.url, e.title, e.vertical ? 1 : 0, e.start_s, e.sort_order);
     }
   }
+  // Outside-the-transaction work: posters are a cache, so fetch/cleanup can
+  // safely run after commit — queueVidThumb never throws and cleanup re-checks
+  // the table before removing a file.
+  setImmediate(() => {
+    for (const e of entries) queueVidThumb(e.provider, e.embed_ref);
+    cleanupVidThumbs(removed);
+  });
 }
 
 app.post('/api/sync/push', (req, res) => {
