@@ -28,6 +28,11 @@ let shareMode = false;      // arrived via a /y/:id share link (focused single-y
 let cameFromDetail = false; // whether the edit form was opened from the detail view
 let editList = [];          // ordered ids the edit form's Save & prev/next steps through (snapshot of the view it opened from)
 let canEditState = true;    // whether the current viewer can edit (false = public view)
+// Ownership is a different question from edit permission, and read-only mode is
+// where they part: the owner still sees prices, Arrivals and Sold with every
+// edit control gone. Anything owner-ONLY hangs off this, not off canEditState.
+let isOwnerState = true;
+let readOnlyState = false;
 let trackingEnabledState = false; // whether any carrier tracking API is configured
 let demoModeState = false;  // public demo: login works but writes are blocked server-side
 let saleNotes = '';         // owner-editable shipping/sale notes shown on the For Sale page
@@ -4315,6 +4320,8 @@ async function loadConfig() {
   let c = { canEdit: true, loginEnabled: false, loggedIn: false };
   try { c = await api('/api/config'); } catch { /* default: editable */ }
   canEditState = !!c.canEdit;
+  isOwnerState = c.isOwner === undefined ? !!c.canEdit : !!c.isOwner;
+  readOnlyState = !!c.readOnly;
   trackingEnabledState = !!c.trackingEnabled;
   demoModeState = !!c.demoMode;
   if (c.version) { const v = $('#appVersion'); if (v) v.textContent = 'v' + c.version; }
@@ -4322,9 +4329,15 @@ async function loadConfig() {
   document.body.classList.toggle('read-only', !c.canEdit);
   $('#loginBtn').classList.toggle('hidden', !c.loginEnabled || c.loggedIn);
   $('#logoutBtn').classList.toggle('hidden', !c.loggedIn);
-  $('#navArrivals').classList.toggle('hidden', !canEditState); // Arrivals is owner-only
-  $('#navSold').classList.toggle('hidden', !canEditState); // Sold history is owner-only
-  if (!canEditState && (currentView === 'arrivals' || currentView === 'sold')) setView('collection');
+  $('#navArrivals').classList.toggle('hidden', !isOwnerState); // Arrivals is owner-only
+  $('#navSold').classList.toggle('hidden', !isOwnerState); // Sold history is owner-only
+  if (!isOwnerState && (currentView === 'arrivals' || currentView === 'sold')) setView('collection');
+  // The switch is owner-only, and must stay reachable WHILE read-only is on or
+  // there would be no way back.
+  const ro = $('#readOnlyAdmin');
+  if (ro) ro.classList.toggle('hidden', !isOwnerState);
+  const roBox = $('#readOnlyToggle');
+  if (roBox) roBox.checked = readOnlyState;
   updateToolbar();
   renderSmartViews();
   applySortVisibility();
@@ -4427,6 +4440,32 @@ $('#settingsBtn').addEventListener('click', () => {
 });
 
 function closeSettings() { $('#settingsModal').classList.add('hidden'); }
+
+// Read-only mode. Saved server-side so it holds for every visitor and survives
+// a restart, and re-read through loadConfig so the whole UI repaints at once.
+const readOnlyBox = $('#readOnlyToggle');
+if (readOnlyBox) {
+  readOnlyBox.addEventListener('change', async () => {
+    const on = readOnlyBox.checked;
+    const status = $('#readOnlyStatus');
+    if (status) status.textContent = 'Saving…';
+    try {
+      await api('/api/settings/read_only', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: on ? '1' : '' }),
+      });
+      await loadConfig();
+      await loadAll();
+      if (status) status.textContent = on ? 'Editing is off.' : 'Editing is on.';
+      toast(on ? 'Read-only mode on — this site is now a mirror.' : 'Read-only mode off.', 'ok');
+    } catch (e) {
+      readOnlyBox.checked = !on;   // put the switch back where it was
+      if (status) status.textContent = '';
+      toast(e.message || 'Could not change read-only mode.', 'error');
+    }
+  });
+}
 
 // Check GitHub for a newer release. The app never updates itself (a container
 // can't safely restart into a new image) — on a hit we show the exact command

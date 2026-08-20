@@ -169,8 +169,46 @@ function isLoggedIn(req) {
   return bt ? validToken(bt) : false;
 }
 // Can the requester change data? Logged-in owner, or fully-open mode.
-function canEdit(req) {
+// Two different questions, kept apart because conflating them costs the owner
+// things they should keep:
+//
+//   isOwner  — may this requester SEE owner-only data (what you paid, Arrivals,
+//              Sold history, CSV export)?
+//   canEdit  — may this requester CHANGE the collection?
+//
+// They diverge when read-only mode is on. That is a switch in Settings, not an
+// env var, so it can be flipped from the site itself: it turns off editing for
+// EVERYONE, the signed-in owner included, while leaving the owner's own view
+// completely intact. The point is the deployment where another device holds the
+// master copy and this site mirrors it — there, editing here only creates work
+// that the next publish quietly destroys.
+//
+// The env READ_ONLY keeps its original meaning (a permanently public,
+// non-editable instance) and still feeds isOwner exactly as before.
+function siteReadOnly() {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'read_only'").get();
+  return !!row && ['1', 'true', 'yes'].includes(String(row.value).toLowerCase());
+}
+function isOwner(req) {
   return isLoggedIn(req) || (!READ_ONLY && !LOGIN_ENABLED);
+}
+function canEdit(req) {
+  return isOwner(req) && !siteReadOnly();
+}
+// Two writes survive read-only mode, and both have to.
+//   · the switch itself, or it could never be turned back off
+//   · publishing, since receiving the collection is what a mirror is FOR
+// Neither survives demo mode.
+function isReadOnlyToggle(req) {
+  return req.method === 'PUT' && req.path === '/api/settings/read_only';
+}
+function isPublish(req) {
+  return req.path === '/api/restore' || req.path.startsWith('/api/sync/');
+}
+function allowedDespiteReadOnly(req) {
+  if (DEMO_MODE || !siteReadOnly()) return false;
+  if (isReadOnlyToggle(req)) return isOwner(req);
+  return isPublish(req) && isLoggedIn(req);
 }
 
 // ---- Login / logout (registered BEFORE the write gate so they aren't blocked) ----
@@ -216,15 +254,19 @@ app.use((req, res, next) => {
   }
 
   // Block data-changing requests unless the requester is allowed to edit.
-  if (isWrite && !canEdit(req)) {
+  if (isWrite && !canEdit(req) && !allowedDespiteReadOnly(req)) {
     // Sync clients distinguish "token expired — re-login silently" (401) from
     // "writes are off here" (403, e.g. demo mode above). Only sync routes get
     // the 401; the web client's own error handling expects 403 elsewhere.
     if (req.path.startsWith('/api/sync/')) {
       return res.status(401).json({ error: 'Please sign in to sync.' });
     }
+    // Say which of the three reasons it is. "Please log in" to someone who is
+    // already logged in reads as a bug and sends them looking in the wrong place.
     return res.status(403).json({
-      error: LOGIN_ENABLED ? 'Please log in to make changes.' : 'This collection is read-only.',
+      error: siteReadOnly()
+        ? 'This site is in read-only mode. Turn it off in Settings to make changes.'
+        : (LOGIN_ENABLED ? 'Please log in to make changes.' : 'This collection is read-only.'),
     });
   }
 
@@ -482,7 +524,7 @@ function publicSafe(y, editable) {
 // ---- API: yoyos ----
 
 app.get('/api/yoyos', (req, res) => {
-  const editable = canEdit(req);
+  const editable = isOwner(req);
   const rows = db.prepare('SELECT * FROM yoyos WHERE deleted_at IS NULL ORDER BY brand, model, color').all();
   res.json(rows.map((r) => publicSafe(decorate(r), editable)));
 });
@@ -490,7 +532,7 @@ app.get('/api/yoyos', (req, res) => {
 app.get('/api/yoyos/:id', (req, res) => {
   const row = db.prepare('SELECT * FROM yoyos WHERE id = ? AND deleted_at IS NULL').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Not found' });
-  res.json(publicSafe(decorate(row), canEdit(req)));
+  res.json(publicSafe(decorate(row), isOwner(req)));
 });
 
 const WRITE_COLS_C = [...WRITE_COLS, 'custom'];
@@ -856,6 +898,8 @@ app.post('/api/sync/photos/:yoyoUuid/:photoUuid', (req, res, next) => {
 // ---- API: config ----
 app.get('/api/config', (req, res) => res.json({
   canEdit: canEdit(req),
+  isOwner: isOwner(req),
+  readOnly: siteReadOnly(),
   loginEnabled: LOGIN_ENABLED,
   loggedIn: isLoggedIn(req),
   trackingEnabled: Object.values(configuredCarriers(process.env)).some(Boolean),
@@ -871,7 +915,7 @@ app.get('/api/config', (req, res) => res.json({
 // process can't safely restart into a new image — so this is advisory only.
 let updateCache = { at: 0, data: null };
 app.get('/api/check-update', async (req, res) => {
-  if (!canEdit(req)) return res.status(403).json({ error: 'Log in to check for updates.' });
+  if (!isOwner(req)) return res.status(403).json({ error: 'Log in to check for updates.' });
   const base = { current: APP_VERSION, runtime: IN_DOCKER ? 'docker' : 'node', updateCommand: updateCommand(), repo: UPDATE_REPO };
 
   const now = Date.now();
@@ -911,7 +955,7 @@ app.get('/api/check-update', async (req, res) => {
 
 // ---- API: site settings (key/value; e.g. For Sale shipping notes) ----
 // Only these keys are readable/writable through the API.
-const PUBLIC_SETTINGS = ['sale_notes'];
+const PUBLIC_SETTINGS = ['sale_notes', 'read_only'];
 app.get('/api/settings', (_req, res) => {
   const out = {};
   for (const k of PUBLIC_SETTINGS) {
@@ -1027,7 +1071,7 @@ app.get('/api/stats', (req, res) => {
     )
     .all();
   // Public viewers don't get financial / ownership totals.
-  if (!canEdit(req)) return res.json({ count: totals.count, byBrand });
+  if (!isOwner(req)) return res.json({ count: totals.count, byBrand });
   res.json({ ...totals, byBrand });
 });
 
@@ -1105,7 +1149,7 @@ function exportValue(header, y, base) {
 }
 
 app.get('/api/export.csv', (req, res) => {
-  if (!canEdit(req)) return res.status(403).json({ error: 'Log in to export.' });
+  if (!isOwner(req)) return res.status(403).json({ error: 'Log in to export.' });
   const rows = db.prepare('SELECT * FROM yoyos WHERE deleted_at IS NULL ORDER BY brand, model, color').all();
   const base = `${req.protocol}://${req.get('host')}`;
 
