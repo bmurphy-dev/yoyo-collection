@@ -294,15 +294,36 @@ body:not(.embed) .app-shell { min-height: 100vh; }
 .views { padding: 22px 26px 48px; }
 .view.hidden { display: none; }
 
-/* The Collection header (stats + search/sort/filters + view bar) stays pinned
-   under the top toolbar so the controls never scroll out of reach. Desktop +
-   standalone only — on phones/embed the toolbar isn't sticky, so this stays a
-   normal block (avoids the top-bar overlay issues). */
+/* The whole header stack — top bar (brand + nav), view title, and the
+   Collection header (stats + search/sort/filters + view bar) — stays pinned
+   while the grid scrolls. Desktop + standalone only — on phones/embed nothing
+   up here is sticky, so these stay normal blocks (avoids the top-bar overlay
+   issues).
+   Each layer pins below the ones above it, and those heights aren't constants
+   (the top bar wraps at narrower widths) — app.js measures them into
+   --topbar-h / --toolbar-h. Without the measurements they fall back to the
+   unwrapped heights. */
 @media (min-width: 761px) {
+  body:not(.embed) .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;               /* above .toolbar (18) and .collection-header (15) */
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(180%) blur(20px);
+  }
+  body:not(.embed) .toolbar {
+    position: sticky;
+    top: var(--topbar-h, 62px);
+    z-index: 18;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(180%) blur(20px);
+  }
   body:not(.embed) .collection-header {
     position: sticky;
-    top: 55px;                 /* toolbar min-height (56) minus its 1px border */
-    z-index: 15;               /* below the toolbar (20), above the grid */
+    top: calc(var(--topbar-h, 62px) + var(--toolbar-h, 49px));
+    z-index: 15;               /* below the topbar (20) and toolbar (18), above the grid */
     margin: -22px -26px 16px;  /* cancel .views padding so it bleeds edge-to-edge */
     padding: 16px 26px 2px;    /* restore inner alignment with the grid below */
     background: color-mix(in srgb, var(--content-bg) 90%, transparent);
@@ -912,8 +933,15 @@ body.read-only .card-actions { display: none; }
 .tile.active small { color: rgba(255,255,255,0.82); }
 
 .toggles { flex-direction: row; gap: 24px; align-items: center; }
-.switch { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; }
-.switch input { position: absolute; opacity: 0; }
+/* position: relative + pointer-events: none contain the invisible checkbox: the
+   edit modal's form-body is a CSS multicol, where an absolutely-positioned box
+   with no positioned ancestor gets its static position from the un-fragmented
+   flow — the toggles' hidden inputs escaped their labels and stacked into a
+   phantom click target over the opposite column (which flipped whichever input
+   was last in the DOM: Retired). The label still forwards clicks and keyboard
+   focus to the input, so behavior is unchanged. */
+.switch { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; position: relative; }
+.switch input { position: absolute; opacity: 0; pointer-events: none; }
 .switch .track { width: 38px; height: 22px; border-radius: 999px; background: var(--surface-3); position: relative; transition: background 0.15s ease; flex: none; }
 .switch .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: transform 0.15s ease; }
 .switch input:checked + .track { background: var(--green); }

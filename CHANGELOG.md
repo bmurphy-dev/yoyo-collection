@@ -3,7 +3,26 @@
 All notable changes to this project are documented here. Every commit that
 changes app behavior gets an entry — newest first.
 
-## 2026-08-02 (3)
+## 2026-08-25
+- **Fix: desktop scroll showed page content in a gap above the pinned Collection
+  header.** The header pinned at `top: 55px` — an offset sized for the old sticky
+  toolbar, which the top-bar redesign made static — so the grid scrolled visibly
+  through the 55px strip where the toolbar used to sit. The whole header stack is
+  now sticky on desktop: the top bar (brand + nav), the view title beneath it,
+  and the Collection header beneath both, each pinned flush under the layer
+  above. Those heights aren't constants (the top bar wraps at narrower windows),
+  so a ResizeObserver measures them into `--topbar-h` / `--toolbar-h` instead of
+  hardcoding new offsets. Phones and embeds are untouched — nothing up there is
+  sticky for them, same as before.
+- **Fix: a phantom click target in the edit form flipped the Retired toggle.**
+  The form body is a CSS multicol, and the toggles' hidden checkboxes were
+  `position: absolute` with no positioned ancestor — in multicol their static
+  position resolves against the un-fragmented flow, so all three escaped their
+  labels and stacked into an invisible clickable area over the opposite column
+  (near Photos). Clicking it toggled whichever input was last in the DOM:
+  Retired. The switch label is now `position: relative` and the input ignores
+  pointer events; the label keeps forwarding clicks and keyboard focus, so
+  nothing else changes.
 - **Dependency security updates (Dependabot)** — patched six advisories by
   bumping: **multer** → 2.2.0 (DoS via deeply nested field names; incomplete
   cleanup of aborted uploads), **adm-zip** → 0.6.0 (crafted-ZIP 4 GB allocation),

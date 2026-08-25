@@ -4641,6 +4641,20 @@ window.addEventListener('message', (e) => {
 //      as a section inside another page. Theme is set via ?theme= in the head. ----
 if (new URLSearchParams(location.search).get('embed')) document.body.classList.add('embed');
 
+// ---- Pinned headers: the view title sticks under the top bar, and the
+//      Collection header under both. Those heights aren't constants — the top
+//      bar wraps at narrower windows — so measure them into CSS variables for
+//      the sticky offsets. ----
+if ('ResizeObserver' in window) {
+  for (const [prop, sel] of [['--topbar-h', '.topbar'], ['--toolbar-h', '.toolbar']]) {
+    const el = document.querySelector(sel);
+    if (!el) continue;
+    new ResizeObserver(() => {
+      document.documentElement.style.setProperty(prop, `${el.offsetHeight}px`);
+    }).observe(el);
+  }
+}
+
 // ---- Go ----
 (async () => {
   await loadConfig();
