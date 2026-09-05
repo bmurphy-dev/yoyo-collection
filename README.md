@@ -100,6 +100,7 @@ the app runs fully open on port 3000. Copy [`.env.example`](.env.example) to
 |---|---|
 | `PORT` | HTTP port (default `3000`) |
 | `DB_PATH` / `UPLOAD_DIR` | Where the database and photos live |
+| `RESTORE_TMP_DIR` | Where Restore puts its scratch folder (defaults to alongside `DB_PATH`) |
 | `ADMIN_PASSWORD` | Public read-only + owner login to edit |
 | `READ_ONLY` | Make the whole app read-only |
 | `AUTH_USER` / `AUTH_PASS` | HTTP Basic auth over the entire app (fully private) |
