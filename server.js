@@ -208,6 +208,10 @@ function isPublish(req) {
 function allowedDespiteReadOnly(req) {
   if (DEMO_MODE || !siteReadOnly()) return false;
   if (isReadOnlyToggle(req)) return isOwner(req);
+  // A carrier ETA query changes nothing in the collection, but it arrives as a
+  // POST so the method-based write gate catches it. Arrivals is owner-only, so
+  // the only read-only requester who needs it is the owner.
+  if (req.path === '/api/track') return isOwner(req);
   return isPublish(req) && isLoggedIn(req);
 }
 

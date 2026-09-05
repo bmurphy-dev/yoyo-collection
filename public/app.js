@@ -339,8 +339,9 @@ function renderStats(list) {
   const filtered = count !== ownedCount;
   const countLabel = filtered ? `of ${ownedCount} shown` : 'Yoyos';
 
-  // Public viewers don't see financial / ownership stats.
-  if (!canEditState) {
+  // Public viewers don't see financial / ownership stats. Read-only mode is
+  // different: the owner's own numbers stay whole there, so gate on ownership.
+  if (!isOwnerState) {
     const brands = new Set(list.map((y) => y.brand).filter(Boolean)).size;
     $('#stats').innerHTML = `
       <div class="stat-card ${filtered ? 'filtered' : ''}"><div class="stat-num">${count}</div><div class="stat-label">${countLabel}</div></div>
@@ -516,7 +517,7 @@ function render() {
 function applyModeChrome(all) {
   const ledger = view.mode === 'row';
   $('#stats').classList.add('hidden');                 // replaced by the teal band in Ledger
-  $('#ledgerBand').classList.toggle('hidden', !ledger || !canEditState);
+  $('#ledgerBand').classList.toggle('hidden', !ledger || !isOwnerState);
   $('#ledgerFilters').classList.toggle('hidden', !ledger);
   $('#collectionFieldsMenu')?.classList.toggle('hidden', !ledger);
   $('#collectionViewsMenu')?.classList.toggle('hidden', !ledger);
@@ -526,7 +527,7 @@ function applyModeChrome(all) {
 
 // The Ledger's teal stat band: lifetime paid / savings / retail value / recovered.
 function renderLedgerBand(list) {
-  const band = $('#ledgerBand'); if (!band || !canEditState) return;
+  const band = $('#ledgerBand'); if (!band || !isOwnerState) return;
   let paid = 0, retail = 0;
   for (const y of list) { paid += y.paid || 0; retail += y.retail || 0; }
   const recovered = yoyos.filter(isSold).reduce((a, y) => a + recoveredAmount(y), 0);
@@ -655,10 +656,10 @@ function shelfHeroHTML(y) {
 }
 function shelfSub(y) {
   // "On order" is owner-only logistics — the server strips in_hand from public
-  // responses, so only owners (canEditState) ever see this state. For public
+  // responses, so only owners (isOwnerState) ever see this state. For public
   // viewers we fall through to the sale status / colorway instead of wrongly
   // flagging everything "on order".
-  if (canEditState && !y.in_hand) return { cls: 'state', text: 'on order' };
+  if (isOwnerState && !y.in_hand) return { cls: 'state', text: 'on order' };
   if (isForSale(y.sale_status)) return { cls: 'state', text: y.sale_status };
   if (y.sale_status === 'Sold') return { cls: 'muted', text: 'sold' };
   return { cls: 'muted', text: y.color || '' };
@@ -775,12 +776,12 @@ function tileHTML(y) {
   return `
     <article class="card" data-id="${y.id}" role="button" tabindex="0" aria-label="${esc(y.brand)} ${esc(y.model)}">
       <span class="sel-box ${selectedIds.has(y.id) ? 'checked' : ''}" data-sel="${y.id}"></span>
-      ${(!canEditState && y.favorite) ? `<span class="card-fav">${SVG.star}</span>` : ''}
+      ${(!isOwnerState && y.favorite) ? `<span class="card-fav">${SVG.star}</span>` : ''}
       ${canEditState ? `<div class="card-actions">
         <button type="button" class="card-fav-btn ${y.favorite ? 'on' : ''}" data-fav="${y.id}" title="${y.favorite ? 'Unfavorite' : 'Favorite'}">${y.favorite ? SVG.star : SVG.starOutline}</button>
         <button type="button" class="card-more-btn" data-more="${y.id}" title="More actions" aria-label="More actions">${SVG.dots}</button>
       </div>` : ''}
-      ${canEditState && !y.in_hand ? '<span class="card-order">On order</span>' : ''}
+      ${isOwnerState && !y.in_hand ? '<span class="card-order">On order</span>' : ''}
       <div class="card-photo">${photo}</div>
       <div class="card-body">
         ${brandHTML}
@@ -799,7 +800,7 @@ function tileHTML(y) {
 function renderRows(items) {
   grid.className = 'table-wrap';
   const cols = view.fields
-    .filter((k) => canEditState || !SENSITIVE.has(k))
+    .filter((k) => isOwnerState || !SENSITIVE.has(k))
     .map((k) => FIELD_BY_KEY[k]).filter(Boolean);
   const editable = listEditMode && canEditState;
   const arrow = (key) => (filters.sort === key ? (filters.sortDir === 'asc' ? ' ▲' : ' ▼') : '');
@@ -834,7 +835,7 @@ function renderRows(items) {
         ${selCell}
         <td class="col-photo">${thumb}</td>
         ${cell(y, 'brand', `${esc(y.brand)}${y.favorite ? ` <span class="row-fav">${SVG.star}</span>` : ''}`)}
-        ${cell(y, 'model', `${esc(y.model)}${canEditState && !y.in_hand ? ' <span class="row-order">on order</span>' : ''}`)}
+        ${cell(y, 'model', `${esc(y.model)}${isOwnerState && !y.in_hand ? ' <span class="row-order">on order</span>' : ''}`)}
         ${cells}
       </tr>`;
   }).join('');
@@ -1047,7 +1048,7 @@ function wireHeaderReorder(ths, { fields, onChange }) {
 function buildFieldsPanel() {
   buildColumnPanel($('#fieldsPanel'), {
     fields: view.fields,
-    choices: ALL_FIELDS.filter((f) => canEditState || !SENSITIVE.has(f.key)),
+    choices: ALL_FIELDS.filter((f) => isOwnerState || !SENSITIVE.has(f.key)),
     defaults: DEFAULT_VIEW.fields,
     onChange: (next) => { view.fields = next; saveView(); render(); },
   });
@@ -1192,7 +1193,7 @@ function wireLedgerViewsControl(page) {
 // Switches between the Collection / Arrivals / For Sale / Sold / Insights
 // views, remembering the choice and rendering the newly-active one.
 function setView(v) {
-  if ((v === 'arrivals' || v === 'sold') && !canEditState) v = 'collection';
+  if ((v === 'arrivals' || v === 'sold') && !isOwnerState) v = 'collection';
   currentView = v;
   try { localStorage.setItem('yoyoTab', v); } catch { /* ignore */ }
   document.querySelectorAll('#sidebarNav .nav-item').forEach((b) =>
@@ -1972,7 +1973,7 @@ function renderArrivalsTable(wrap, toolbar) {
 // separate "no date yet" section.
 function renderArrivals() {
   const wrap = $('#viewArrivals');
-  if (!canEditState) { wrap.innerHTML = `<div class="insight-note">${SVG.lock}<span>Log in to track incoming yoyos.</span></div>`; return; }
+  if (!isOwnerState) { wrap.innerHTML = `<div class="insight-note">${SVG.lock}<span>Log in to track incoming yoyos.</span></div>`; return; }
   const toolbar = arrivalsToolbarHTML();
   if (arrivalsView.mode === 'table') { renderArrivalsTable(wrap, toolbar); return; }
   const groups = arrivalGroups();
@@ -2490,7 +2491,7 @@ function openSaleStatusDialog(ids) {
 // markup in index.html) so focus/cursor position in the search box survives
 // every re-render.
 function syncSaleControls() {
-  $('#saleStats').classList.toggle('hidden', !canEditState);
+  $('#saleStats').classList.toggle('hidden', !isOwnerState);
   $('#saleControls').classList.toggle('hidden', !canEditState);
   if (!canEditState) return;
   $('#saleSearch').value = saleView.q;
@@ -2508,7 +2509,9 @@ function syncSaleControls() {
 // itself) — the function every seller-tools interaction calls.
 function renderSaleBody() {
   const body = $('#saleBody');
-  if (!canEditState) {
+  // Read-only owners keep their sale view (the card's own Edit buttons hide
+  // themselves via canEditState); only true public viewers get the intro grid.
+  if (!isOwnerState) {
     const items = yoyos.filter((y) => isForSale(y.sale_status))
       .sort((a, b) => String(a.brand || '').localeCompare(String(b.brand || '')) || String(a.model || '').localeCompare(String(b.model || '')));
     body.innerHTML = items.length
@@ -2975,7 +2978,7 @@ function avgSpecsHTML(list) {
 function renderInsights() {
   const wrap = $('#viewInsights');
   if (!yoyos.length) { wrap.innerHTML = '<div class="insight-note">Add some yoyos to see insights.</div>'; return; }
-  const admin = canEditState;
+  const admin = isOwnerState;
   // Owned = the active collection. Sold yoyos still count toward lifetime
   // spend (Total paid / Recovered / Net spent) but not collection metrics.
   const owned = ownedYoyos();
@@ -3101,12 +3104,12 @@ function detailHTML(y) {
   if (y.condition) chips.push(`<span class="tag clickable" data-filt="conditions:${esc(y.condition)}">${esc(y.condition)}</span>`);
   if (y.color) chips.push(`<span class="tag">${esc(y.color)}</span>`);
   const chipHTML = chips.join('');
-  const statusBadge = canEditState
+  const statusBadge = isOwnerState
     ? `<span class="status-badge ${y.in_hand ? 'in' : 'order'}">${y.in_hand ? 'In hand' : 'On order'}</span>` : '';
   const retiredBadge = y.retired ? '<span class="status-badge retired">Retired</span>' : '';
 
   let priceRow = '';
-  if (canEditState && (y.paid != null || y.retail != null || y.market_value != null)) {
+  if (isOwnerState && (y.paid != null || y.retail != null || y.market_value != null)) {
     const parts = [];
     if (y.paid != null) parts.push(`<span class="dh-paid">${money(y.paid)}</span>`);
     if (y.retail != null) parts.push(`<span class="dh-retail">${money(y.retail)} retail</span>`);
@@ -3293,7 +3296,7 @@ async function renderCardBlob(y) {
   // Visible fields = the collection's current selection, filtered by the same
   // public-sensitivity rule the rest of the UI uses.
   const visible = (Array.isArray(view?.fields) ? view.fields : [])
-    .filter((k) => canEditState || !SENSITIVE.has(k));
+    .filter((k) => isOwnerState || !SENSITIVE.has(k));
   const seen = (k) => visible.includes(k);
   const has = (k) => { const v = valueOf(y, k); return v != null && v !== ''; };
 
@@ -4063,7 +4066,7 @@ function buildFilterPanel() {
   const comps = ['BI', 'MN', 'TRI'];
   const chip = (group, val, label) =>
     `<button type="button" class="filter-chip ${filters[group].includes(val) ? 'active' : ''}" data-group="${group}" data-val="${esc(val)}">${esc(label)}</button>`;
-  const money$ = canEditState;
+  const money$ = isOwnerState;
 
   panel.innerHTML =
     `<div class="filter-section"><div class="filter-label">Brand</div>
@@ -4327,6 +4330,7 @@ async function loadConfig() {
   if (c.version) { const v = $('#appVersion'); if (v) v.textContent = 'v' + c.version; }
   renderDemoBanner(!!c.loggedIn);
   document.body.classList.toggle('read-only', !c.canEdit);
+  document.body.classList.toggle('owner', !!c.isOwner);
   $('#loginBtn').classList.toggle('hidden', !c.loginEnabled || c.loggedIn);
   $('#logoutBtn').classList.toggle('hidden', !c.loggedIn);
   $('#navArrivals').classList.toggle('hidden', !isOwnerState); // Arrivals is owner-only
@@ -4347,11 +4351,11 @@ async function loadConfig() {
 function applySortVisibility() {
   const sensitive = ['paid', 'retail', 'percent_off', 'purchase_date', 'sold_date', 'market_value'];
   [...$('#sort').options].forEach((o) => {
-    const hide = !canEditState && sensitive.includes(o.value);
+    const hide = !isOwnerState && sensitive.includes(o.value);
     o.hidden = hide;
     o.disabled = hide;
   });
-  if (!canEditState && sensitive.includes(filters.sort)) {
+  if (!isOwnerState && sensitive.includes(filters.sort)) {
     filters.sort = 'brand'; filters.sortDir = 'asc'; $('#sort').value = 'brand';
   }
 }
