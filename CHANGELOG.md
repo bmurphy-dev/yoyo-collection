@@ -3,6 +3,46 @@
 All notable changes to this project are documented here. Every commit that
 changes app behavior gets an entry — newest first.
 
+## 2026-09-05 — Release v1.2.0
+- **Read-only mode: the way back, and the owner's whole view** — three fixes
+  to the follow-through of the read-only switch:
+  - The **Settings gear no longer disappears** in read-only mode, so the switch
+    is actually reachable while it's on (before, the same CSS rule that hides
+    the Add button hid the gear too — the one way to turn it back off). The
+    gear is now owner-only chrome instead of read-only chrome.
+  - **Arrivals and Sold open again for the owner in read-only mode.** The view
+    router still bounced to Collection on the old edit-permission flag while
+    the sidebar showed the items; both now hang off ownership. Public viewers
+    see exactly what they saw before.
+  - **Owner-only data displays follow ownership, not edit permission:** stats,
+    ledger band, paid/retail/value rows, sensitive table columns and filters,
+    financial sort options, "on order" badges, and the sale-view stats all
+    show for a read-only owner again (the owner's view stays whole — the
+    intent the switch shipped with). Editing controls stay gated on edit
+    permission and are untouched.
+- **Carrier ETA query works in read-only mode** — POST /api/track was caught by
+  the method-based write gate, so a read-only owner lost the Arrivals "Query
+  ETA" button. It changes nothing in the collection and stays owner-only; it
+  is now exempt from the read-only gate, like the toggle and publishing.
+- Version bump to 1.2.0 (Settings → Version & updates reads it from here).
+
+## 2026-08-19 (2)
+- **Read-only mode, as a switch in Settings** — for the mirror setup where
+  another device holds the master copy: editing here only creates work that
+  the next publish quietly destroys. The switch is stored server-side (the
+  settings key/value table), so it holds for every visitor and survives a
+  restart. Editing and ownership are now two separate questions — isOwner
+  (see owner-only data) vs canEdit (change the collection) — so turning
+  editing off removes every edit control while leaving the owner's own view
+  whole. The switch itself and publishing (/api/restore, /api/sync/*) stay
+  available; neither survives demo mode. The env READ_ONLY is untouched.
+- **Don't send the original's uuid when duplicating** — bulkDuplicate stripped
+  every field "except identity" but not identity itself: a duplicate travelled
+  carrying the original's uuid. The server always overwrote it on POST, so
+  nothing was ever wrong on the wire — but two records sharing a uuid is the
+  one payload that breaks the unique index and every client keyed on that id,
+  so it should not be in flight at all.
+
 ## 2026-08-02 (3)
 - **Dependency security updates (Dependabot)** — patched six advisories by
   bumping: **multer** → 2.2.0 (DoS via deeply nested field names; incomplete
