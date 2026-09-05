@@ -390,6 +390,22 @@
           </label>
         </section>
 
+        <section class="form-section">
+          <header class="fs-head"><span class="fs-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="m10 9.5 5 2.5-5 2.5z"/></svg></span>
+            <div><h3>Videos</h3><p>Reviews &amp; tricks</p></div>
+          </header>
+          <div id="videoList" class="video-list"></div>
+          <div class="video-add">
+            <!-- type=text on purpose: this input lives inside #yoyoForm, and a type=url
+     input fails native validation on schemeless links ("youtube.com/…" — a form
+     this feature explicitly supports), which blocked the ENTIRE yoyo save with
+     a browser bubble. Validation is parseVideoUrl's job, server-side. -->
+            <input type="text" inputmode="url" id="videoUrl" placeholder="Paste a YouTube or Instagram link…" autocomplete="off" />
+            <input type="text" id="videoTitle" placeholder="Label (optional) — e.g. “Review by …”" autocomplete="off" />
+            <button type="button" id="videoAddBtn" class="btn btn-ghost">Add video</button>
+          </div>
+        </section>
+
         </div><!-- /form-body -->
 
         <div class="modal-foot">

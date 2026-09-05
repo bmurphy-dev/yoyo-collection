@@ -27,6 +27,10 @@ anything.
   who you bought from / sold to). Private fields stay hidden from public viewers.
 - **Photos** — multiple per yoyo, drag-to-reorder, auto-thumbnailed, with a
   click-to-zoom viewer.
+- **Linked videos** — attach YouTube or Instagram links (reviews, trick videos,
+  unboxings) to a yoyo. They get their own section, and nothing loads from
+  YouTube or Instagram until a visitor presses play. See
+  [Linked videos](#linked-videos-youtube--instagram).
 - **For Sale page** — a public, shareable page for the throws you're selling or
   trading, with prices, status badges, and your own shipping/sale notes.
 - **Sharing** — share any single yoyo as its own link (it shows the photo and key
@@ -169,6 +173,38 @@ and your choices are remembered in the browser.
 - **Fields ▾** — choose which fields show (Brand and Model are always shown).
 - **Per page** — 12 / 24 / 48 / 96 / All.
 
+## Linked videos (YouTube / Instagram)
+Links to **other people's videos** about a throw — a review, a trick video, an
+unboxing. Paste one into the **Videos** section of the add/edit form, with an
+optional label.
+
+They're deliberately kept out of the photo gallery: there are usually several,
+and none of them should end up as the cover image for your yoyo.
+
+Accepted link formats:
+```
+https://www.youtube.com/watch?v=ID          https://youtu.be/ID
+https://m.youtube.com/watch?v=ID            https://youtu.be/ID?t=90
+https://www.youtube.com/shorts/ID           https://www.youtube.com/live/ID
+https://www.instagram.com/p/SHORTCODE/      https://www.instagram.com/reel/SHORTCODE/
+```
+Mobile (`m.youtube.com`) links, `music.youtube.com`, and links pasted without
+`https://` all work, as do the tracking parameters that get appended when you
+share from an app. A `t=` / `?t=90` timestamp is preserved, so you can link
+straight to the part of a review that discusses the throw. The same video pasted
+in two different formats is recognised as a duplicate. Shorts and Reels get a
+portrait frame.
+
+**Nothing is requested from YouTube or Instagram until someone presses play.** The
+card you see first is local markup; the player `<iframe>` is only created on
+click, and YouTube is embedded via `youtube-nocookie.com`. On a public showcase
+page that means visitors aren't handed third-party cookies for videos they never
+watched — and a yoyo with several videos still opens instantly.
+
+Instagram embeds only work for **public** posts and reels. Private or age-gated
+ones will show an empty frame, so every card also carries an "Open on Instagram"
+link as a fallback.
+
 ## CSV import / export
 Use **⤓ Export CSV** / **⤴ Import CSV** in the toolbar. Columns:
 ```
@@ -186,6 +222,8 @@ updated (so re-importing an export won't duplicate). Photos aren't imported.
 Handy if you want to script against it (subject to the access mode above):
 - `GET/POST /api/yoyos`, `GET/PUT/DELETE /api/yoyos/:id`
 - `POST /api/yoyos/:id/photos`, `DELETE /api/photos/:photoId`
+- `POST /api/yoyos/:id/videos` — JSON `{ url, title? }`, attach a YouTube /
+  Instagram link; `DELETE /api/videos/:videoId`
 - `POST /api/track` — carrier ETA look-up (needs carrier creds)
 - `GET /api/stats`, `GET /api/config`
 - `GET /api/backup.zip`, `POST /api/restore`

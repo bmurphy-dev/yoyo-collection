@@ -47,7 +47,8 @@ changes app behavior gets an entry — newest first.
   pointer events; the label keeps forwarding clicks and keyboard focus, so
   nothing else changes.
 
-## 2026-08-19 (2)
+## 2026-08-19 (6)
+
 - **Read-only mode, as a switch in Settings** — for the mirror setup where
   another device holds the master copy: editing here only creates work that
   the next publish quietly destroys. The switch is stored server-side (the
@@ -57,12 +58,76 @@ changes app behavior gets an entry — newest first.
   editing off removes every edit control while leaving the owner's own view
   whole. The switch itself and publishing (/api/restore, /api/sync/*) stay
   available; neither survives demo mode. The env READ_ONLY is untouched.
+
 - **Don't send the original's uuid when duplicating** — bulkDuplicate stripped
   every field "except identity" but not identity itself: a duplicate travelled
   carrying the original's uuid. The server always overwrote it on POST, so
   nothing was ever wrong on the wire — but two records sharing a uuid is the
   one payload that breaks the unique index and every client keyed on that id,
   so it should not be in flight at all.
+
+
+
+
+- **Linked videos (YouTube / Instagram)** — a yoyo can now carry links to other
+  people's videos: reviews, trick videos, unboxings. Paste a link (with an
+  optional label) in the new **Videos** section of the add/edit form; they show
+  in their own section of the detail view.
+  - Kept **out** of the photo gallery on purpose. There are usually several per
+    yoyo and none of them should become its cover image, so they live in a new
+    `videos` table — a row has no file, and none of the list views need to know
+    they exist.
+  - **Nothing is requested from YouTube or Instagram until a visitor presses
+    play.** The card is local markup and the `<iframe>` is created on click, so a
+    public showcase page hands out no third-party cookies for videos nobody
+    watched, and a yoyo with several videos still opens instantly. YouTube is
+    embedded through `youtube-nocookie.com`.
+  - Accepts every common link shape: `watch?v=`, `youtu.be/`, **`m.youtube.com`**,
+    `music.youtube.com`, `/shorts/`, `/live/`, `/embed/`, Instagram `/p/`,
+    `/reel/` and `/tv/` (including the `/<user>/reel/<code>` form), links pasted
+    without a scheme, and app-share tracking parameters. A `t=`/`t=1m30s`
+    timestamp is preserved. Shorts and Reels get a portrait frame.
+  - Only whitelisted hosts are accepted and ids are pattern-matched, so the embed
+    URL is rebuilt from a fixed template rather than from pasted text — a
+    lookalike host like `youtube.com.evil.tld`, or a `javascript:`/`data:` URL,
+    is rejected. Because links normalise to a provider + id pair, the same video
+    pasted in two formats is detected as a duplicate.
+  - Backup/restore carries videos, and restoring a backup made *before* this
+    release still works (a missing `videos` table is an empty list, not an
+    error). Deleting a yoyo clears its video rows, including via sync push.
+
+
+- **Review fixes to the linked-videos work below** (found by an adversarial
+  review pass before merge; each was reproduced first, then fixed):
+  - The video-link box is a plain text input now. It was `type="url"` inside the
+    yoyo form, so a schemeless link left in it — `youtube.com/…`, a form the
+    feature explicitly supports — failed native validation and **blocked saving
+    the entire yoyo** with a browser bubble. Validation belongs to the server's
+    parser, which already handles schemeless links.
+  - A link left in the box when you hit **Save** is now folded into the save
+    instead of silently vanishing with the modal; if it's a bad link, the save
+    stops with everything intact and a clear message.
+  - Stored links are the **normalized absolute URL**, not the raw paste — a
+    schemeless paste used to render "Open on YouTube" as a relative link into
+    this app (a 404 on your own host).
+  - Instagram path parsing uses `Object.hasOwn` instead of `in`, which also
+    matched inherited `Object.prototype` keys — `instagram.com/constructor/…`
+    stored the stringified `Object` constructor as an embed path.
+
+- **Untitled videos now caption themselves with the real video title**, fetched
+  once server-side from YouTube's keyless oEmbed endpoint when a video is added
+  without a title (a typed title always wins). Existing blank-title rows are
+  filled in quietly at boot. Instagram's oEmbed requires an API token, so IG
+  cards keep the generic label.
+
+- **Cards now show the real video thumbnail** (feedback from device testing —
+  the placeholder-only cards read as broken). The server fetches YouTube's
+  thumbnail once per video and serves it from `uploads/` like any other image,
+  so viewers' browsers still make zero third-party requests before pressing
+  play. Fetched at add time, self-healing in the background for videos that
+  predate the cache, refcounted on delete (two yoyos sharing a video share one
+  cached file). Instagram publishes no tokenless thumbnail endpoint, so IG
+  cards keep the local placeholder.
 
 ## 2026-08-15
 - **Restore no longer buffers the whole backup in memory** — `POST /api/restore`

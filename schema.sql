@@ -92,6 +92,32 @@ CREATE TABLE IF NOT EXISTS photos (
 
 CREATE INDEX IF NOT EXISTS idx_photos_yoyo ON photos(yoyo_id);
 
+-- External video embeds (YouTube / Instagram) attached to a yoyo: reviews,
+-- trick videos, unboxings. These are references rather than product imagery, so
+-- they live outside `photos` — they have no file, can't be a gallery cover, and
+-- are shown in their own section of the detail view.
+--
+-- Nothing here is ever interpolated into markup raw: `provider` is a validated
+-- enum and `embed_ref` a strictly-matched id, and the embed URL is rebuilt from
+-- the pair against a fixed template (see buildEmbedUrl in server.js).
+CREATE TABLE IF NOT EXISTS videos (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  yoyo_id     INTEGER NOT NULL,
+  uuid        TEXT,                        -- stable cross-device id for sync
+  provider    TEXT NOT NULL,               -- youtube | instagram
+  embed_ref   TEXT NOT NULL,               -- provider's own ref: a YouTube id, or Instagram's "p/<shortcode>"
+  url         TEXT NOT NULL,               -- the link as pasted, for the "open on <platform>" fallback
+  title       TEXT NOT NULL DEFAULT '',
+  vertical    INTEGER NOT NULL DEFAULT 0,  -- 9:16 content (Shorts, Reels) — frames taller
+  start_s     INTEGER NOT NULL DEFAULT 0,  -- resume point carried over from the pasted URL's t= param
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (yoyo_id) REFERENCES yoyos(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_videos_yoyo ON videos(yoyo_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_videos_uuid ON videos(uuid);
+
 -- Site-wide key/value settings (e.g. the For Sale shipping notes).
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
