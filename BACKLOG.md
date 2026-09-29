@@ -80,6 +80,7 @@ guessing at favorites. This proposal defines the shared `yoyo_events` table
 - The client sends its local date. Owner-only, and blocked by the existing
   write gate in read-only mode.
 - Derive the rankings and never auto-set `favorite`: Most thrown, EDC (thrown on half or more of the last 30 days), Collecting dust (3+ throw-days in the last year, none in the last 90), Shelf queen (at most 2 throw-days in the last year, owned 90+ days; never overlaps Collecting dust).
+- Rankings use 30/90/365-day snapshots. Long-term analytics (Most thrown and a Long-term trends card) reach back 2, 3, 5, and 10 years and all time, via server aggregates (`/api/events/summary?from=`, `/api/events/histogram`).
 - Past-day logging, bulk "Used today", streaks, a throw calendar (reusing Arrivals' `cal-grid`), and a Yoyo of the day that favors neglected yoyos.
 
 Full proposal: [proposals/throw-log.md](proposals/throw-log.md).
