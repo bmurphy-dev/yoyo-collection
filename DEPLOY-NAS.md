@@ -379,6 +379,31 @@ needed here. (*Show environment file* reveals an editor for a `.env` beside the
 stack, which is where an `ADMIN_PASSWORD` would go if you ever set one, rather
 than in the compose file itself.)
 
+> **Setting a password through the environment file takes two edits.** The
+> plugin only uses that `.env` to fill in `${...}` placeholders in the compose
+> file; it doesn't hand its values to the container on its own. Put the value in
+> the environment file:
+>
+> ```
+> ADMIN_PASSWORD=your-password-here
+> ```
+>
+> and reference it from the compose file's `environment:` block:
+>
+> ```yaml
+>     environment:
+>       DB_PATH: /data/yoyos.db
+>       UPLOAD_DIR: /data/uploads
+>       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+> ```
+>
+> Skip the second edit and the password silently never arrives. Because the
+> compose file is unchanged, **Up** just reports `Container yoyo-collection
+> Running` and leaves the old container in place. With the reference line, **Up**
+> recreates the container with the password, and this works the same when you
+> add a password to a stack that's already running. Your data lives in the
+> bind-mounted folder, so recreating the container doesn't touch it.
+
 Then **Save**. With **Run config** ticked back in step 3, the syntax is checked
 now rather than at start. The editor shows line numbers, so if it complains,
 check indentation first — YAML is whitespace-sensitive and a pasted block is the
