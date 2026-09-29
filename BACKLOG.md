@@ -30,7 +30,7 @@ Personal notes, kept only on `combined/all-prs` and never sent upstream.
 | 1 | In-app 360 creation from a dropped video | media | **Done here only.** Blocked upstream by the media redesign (PR #7) |
 | 2 | Wishlist restock/price watcher | product URL can live in `custom`; price history needs a table | idea |
 | 3 | Photo import alongside CSV | media | blocked (media) |
-| 4 | Maintenance & provenance log | shared `yoyo_events` table (types only) | posted as [#13](https://github.com/stammig/yoyo-collection/issues/13); draft: [proposals/maintenance-log.md](proposals/maintenance-log.md), plan: [proposals/maintenance-log-plan.md](proposals/maintenance-log-plan.md) |
+| 4 | Maintenance, contest & provenance log | shared `yoyo_events` table (types only) | posted as [#13](https://github.com/stammig/yoyo-collection/issues/13); draft: [proposals/maintenance-log.md](proposals/maintenance-log.md), plan: [proposals/maintenance-log-plan.md](proposals/maintenance-log-plan.md) |
 | 5 | Collection value over time | additive snapshots table | idea |
 | 6 | Throw log ("used today") | defines shared `yoyo_events` table + sync endpoints | **next**: branch `feat/throw-log`; posted as [#12](https://github.com/stammig/yoyo-collection/issues/12); draft: [proposals/throw-log.md](proposals/throw-log.md), plan: [proposals/throw-log-plan.md](proposals/throw-log-plan.md) |
 | 7 | More Insights charts from existing columns | none | idea; easiest PR to get accepted |
@@ -51,11 +51,14 @@ The README says "Photos aren't imported." Add a companion zip whose files map to
 rows by a filename column or brand+model.
 
 ### 4. Maintenance & provenance log
-Dated per-yoyo events (clean, bearing, pads, string, mod, repair, history, note)
+Dated per-yoyo events (clean, bearing, pads, string, mod, repair, contest, history, note)
 shown as a timeline on the detail view. It only adds types to #6's
 `yoyo_events` table. Acquisition and sale entries come from the existing yoyo
 fields, and events never rewrite specs. Sharing the table is what makes
-"throw-days since last clean" and a "Due for a clean" list possible. Full
+"throw-days since last clean" and a "Due for a clean" list possible. `contest`
+(`data`: contest, division, round, placement) is its own type because a throw row
+is a per-day on/off; logging one on the web also ensures that day's throw, while
+sync push stays literal. Full
 proposal: [proposals/maintenance-log.md](proposals/maintenance-log.md).
 
 ### 5. Collection value over time
