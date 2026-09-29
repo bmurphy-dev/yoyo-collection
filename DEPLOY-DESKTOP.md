@@ -37,14 +37,15 @@ On Windows that also means **no build tools and no Visual Studio C++ workload**.
 If you'd rather use Docker anyway, see
 [Using Docker instead](#using-docker-instead) — viable, with one required change.
 
-## 2. Node 22.13 or newer
+## 2. Node 22.13+ (or 23.4+)
 
 That minor version matters. `node:sqlite` landed in Node 22.5 behind
-`--experimental-sqlite` and was only unflagged in **22.13.0**. On 22.5–22.12 the
-app crashes at startup with an unknown-builtin error. Node 24 LTS is fine too.
+`--experimental-sqlite` and was only unflagged in **22.13.0** on the 22.x line
+and **23.4.0** on the 23.x line. On 22.5–22.12 or 23.0–23.3 the app crashes at
+startup with an unknown-builtin error. Node 24 LTS is fine too.
 
 ```
-node --version        # must be v22.13.0 or higher
+node --version        # v22.13.0+, or v23.4.0+ (not 23.0–23.3)
 ```
 
 ## 3. Keep the folder out of cloud sync ⚠️
@@ -252,8 +253,9 @@ that point follow [DEPLOY-NAS.md](DEPLOY-NAS.md) instead.
 
 ## Notes / gotchas
 
-- **Node 22.13 is a hard floor**, but `package.json` pins `"node": "22.x"` —
-  which technically allows 22.5–22.12, where the app won't start. The Docker
+- **Node 22.13 / 23.4 is a hard floor.** `package.json` declares it
+  (`"node": ">=22.13 <23 || >=23.4"`), but npm only warns on an `engines`
+  mismatch rather than refusing, so check `node --version` yourself. The Docker
   image dodges this; native installs don't.
 
 - **Run exactly one instance.** SQLite is single-writer, and the app's rate
