@@ -42,7 +42,7 @@ These are three proposals meant to be read together. Each could be a separate, r
 |---|---|---|---|
 | 1 | **This issue:** date convention | none | `localDay()`/`parseDay()`, normalized day fields, and the fixes above |
 | 2 | #12: throw log | adds the `yoyo_events` table + `/api/sync/events` | "used today," Most thrown, Gathering dust |
-| 3 | #13: maintenance & provenance log | none (types on the same table) | timeline, quick-log, "throw-days since last clean" |
+| 3 | #13: maintenance, contest & provenance log | none (types on the same table) | timeline, quick-log, contest record, "throw-days since last clean" |
 
 The dependencies run one way. #12 and #13 both store `occurred_on` as a local calendar day, which is exactly the convention this issue writes down, and they'd use `localDay()` rather than each introducing its own. #13's timeline also shows "Bought from…" and "Sold to…" entries from `purchase_date`/`sold_date`, which only sort correctly once those fields are normalized. Landing this first gives both of those PRs a settled foundation. It's also useful on its own, since bug 1 affects anyone who marks sales in the evening today.
 
