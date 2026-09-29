@@ -1,6 +1,6 @@
 ## The problem
 
-A collection answers "what do I own?" but not "what do I actually throw?" Past a couple dozen yoyos, the ones in real rotation and the ones that haven't left the shelf in months blur together. The `favorite` star captures intent, not use. I'd like a one-tap **"used today"** on each yoyo, plus Insights charts of which throws get used most by week, month, and year, and a derived "most thrown" ranking.
+A collection answers "what do I own?" but not "what do I actually throw?" Past a couple dozen yoyos, the ones in real rotation and the ones that haven't left the shelf in months blur together. The `favorite` star captures intent, not use. I'd like a one-tap **"used today"** on each yoyo, plus Insights charts of which throws get used most by week, month, and year, and a derived "most thrown", "everyday carry (edc)", "collecting dust", and "shelf queen" insights rankings.
 
 This is one of two related proposals. The other is a maintenance and provenance log (#13). Both are dated events on a yoyo, so I'm proposing a single `yoyo_events` table with a `type` column that both use. This issue defines that table. Whichever PR lands first creates it, and the other only adds types and UI.
 
@@ -60,7 +60,31 @@ A client that never calls the new sync endpoints is unaffected. It just doesn't 
 
 The table, the endpoints above, and the `throw` type.
 
-**UI:** a "used today" toggle on the detail view and card menu, a small per-yoyo sparkline on the detail view, and a "Most thrown" card in Insights with a week/month/year switch, reusing the existing `barChart` helper. "Most thrown" would also join the standouts row next to Most valuable and Heaviest. No new dependencies.
+**Logging:**
+- A "used today" toggle on the detail view and card menu.
+- **Past days:** people forget, so tapping a day in the detail view's sparkline or calendar toggles *that* day. It's the same endpoint with a chosen `occurred_on`, and the derived id makes it safe to repeat.
+- **Several at once:** after a session with four throws, the Collection view's existing select mode gets a "Used today" bulk action. That's one toggle per selected yoyo.
+
+**Rankings,** all derived from the log and never stored. They're owner-only and cover in-hand yoyos only:
+
+| ranking | rule |
+|---|---|
+| **Most thrown** | most throw-days in the chosen week, month, or year |
+| **Everyday carry (EDC)** | thrown on at least half of the last 30 days, so it's the consistent pick rather than one binge weekend |
+| **Collecting dust** | a real thrower that's gone quiet: thrown on 3+ days in the last year, but none in the last 90 |
+| **Shelf queen** | thrown on at most 2 days in the last year (never counts), and owned for 90+ days (by `purchase_date`, falling back to `created_at`), so new arrivals aren't labeled. Taking it off the shelf once or twice doesn't cost the title. For collectors this is a badge of honor, not a nag. |
+
+Collecting dust and Shelf queen split on that 2-day line, so a yoyo is never both. The thresholds are constants in `app.js`, easy to tune or turn into settings later.
+
+**Insights and detail view:**
+- A "Most thrown" card with a week/month/year switch, reusing the existing `barChart` helper.
+- EDC, Collecting dust, and Shelf queen lists.
+- "Most thrown" and the current **streak** ("5 days in a row") join the standouts row next to Most valuable and Heaviest.
+- A **throw calendar** that reuses the Arrivals calendar's month grid, with throw days marked.
+- A small per-yoyo sparkline on the detail view.
+- For the owner, **Yoyo of the day** favors Collecting dust and Shelf queen picks, turning the analytics into a reason to throw something neglected. Public viewers keep today's rotation.
+
+No new dependencies. Everything after the toggle is derived, so any of it can be split into a follow-up PR if you'd rather review a smaller first step.
 
 ## Questions for you
 
@@ -73,4 +97,9 @@ Happy to build it on whatever shape you land on, or to hold off if it's better t
 
 ---
 
+**Edit 2:** Shelf queen now allows up to 2 throw-days a year, and Collecting dust starts at 3+, so the two never overlap.
+
+**Edit:** added past-day logging, the multi-select "Used today," definitions for the EDC, Collecting dust, and Shelf queen rankings, streaks, the throw calendar, and a Yoyo of the day that favors neglected yoyos.
+
 **Related:** #14 proposes the date convention this relies on (`occurred_on` as a local calendar day, via a shared `localDay()` helper) and fixes existing date bugs. Its table shows how #14, this issue, and #13 fit together as three PRs.
+
