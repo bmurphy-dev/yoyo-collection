@@ -9,6 +9,8 @@ One correction carried over from #12: the proposal said backup/restore needed no
 This PR adds no schema change and no new sync code. The types are just values in `yoyo_events.type`.
 
 - **`POST /api/yoyos/:id/events`** with a non-throw type inserts a row with `crypto.randomUUID()`, the validated `occurred_on`, a `note` capped at 1,000 characters, and `data` run through `sanitizeEventData`. It stamps `updated_at` and `rev` in a transaction, returns the row, and doesn't call `touchYoyo()`, for the same reason as #12.
+- **`contest` also logs the day's throw.** In the same transaction, the handler upserts the throw row at `throwUuid(yoyo_uuid, occurred_on)`: it inserts it if missing, revives it if tombstoned, and leaves it alone if already live. That reuses #12's toggle code in "ensure on" mode. If the contest is later redated, the new day's throw is ensured too, and the old day's throw is left alone. Deleting the contest never removes a throw.
+- **Sync push stays literal.** `/api/sync/events` stores exactly the rows it's sent and creates no derived throw. A client logging a contest pushes both rows itself, which is one extra row with the derived id. Keeping the server's sync path free of side effects means what a device pushed is exactly what every other device pulls. This gets documented alongside #12's Apple app contract.
 - **`PUT /api/events/:uuid`** edits `occurred_on`, `note`, `data`, and `type`. Changing a row to or from `throw` is rejected, because throw ids are derived from the date, so a throw can't be retyped or redated in place.
 - **`DELETE /api/events/:uuid`** tombstones the row (`deleted_at`, `updated_at`, `rev`) rather than removing it, so the delete syncs.
 - **Validation stays generic:** the server checks the type pattern and the shape of `data`, not a per-type field list. Types the Apple app adds later are stored as-is and shown generically on the web.
@@ -17,12 +19,14 @@ This PR adds no schema change and no new sync code. The types are just values in
 
 ### 2. `public/app.js`
 
-- **`EVENT_TYPES` metadata:** one client-side map per type holding its label, an existing `SVG` icon, and its optional fields. For example, `bearing` has fields `bearing` and `size`, and `string` has field `string`. Unknown types fall back to "Other · <type>".
+- **`EVENT_TYPES` metadata:** one client-side map per type holding its label, an existing `SVG` icon, and its optional fields. For example, `bearing` has fields `bearing` and `size`, `string` has field `string`, and `contest` has fields `contest`, `division`, `round`, and `placement` (number). Unknown types fall back to "Other · <type>".
 - **The timeline:** add a `timelineHTML(y, events)` section to `detailHTML`, after the videos section. It loads lazily from `openDetail()` via `GET /api/yoyos/:id/events`, and only for owners. It merges three sources, newest first:
   - maintenance and history events, each with an icon, label, date, the `data` values, and the note
   - "Bought from <seller>" and "Sold to <buyer>" entries rendered from `purchase_date`/`seller` and `sold_date`/`buyer`, never stored as events
   - throws collapsed to one line per month ("Thrown 9 days in March"), so a heavily used yoyo's timeline stays readable
-- **Log maintenance:** a `hero-act` button (only when `canEditState`) opens a small form with a type picker, a date defaulting to `localDay()`, fields that change with the chosen type, and a note. Each timeline row gets an edit/delete menu that reuses the same form.
+- **Log event:** a `hero-act` button (only when `canEditState`) opens a small form with a type picker, a date defaulting to `localDay()`, fields that change with the chosen type, and a note. The contest name field gets a `<datalist>` of earlier `data.contest` values, the same pattern `refreshDatalists()` uses for brands and sellers, so entries for several yoyos group under one exact name. After saving a contest, the "used today" state for that day updates in the local `throwDays` map, so no refetch is needed.
+- **Contest in the timeline:** it's highlighted rather than listed like the maintenance rows. It shows a trophy icon (a new entry in the `SVG` map, drawn in the same stroke style as the rest), the placement as "3rd", and division, round, and contest name.
+- **Competition record:** an Insights `insightCard`, owner-only, listing each contest with its date, the yoyo used, division, and placement, newest first. It reads from `GET /api/events?type=contest`, and is hidden when there are none. Each timeline row gets an edit/delete menu that reuses the same form.
 - **Specs stay untouched:** saving a `bearing` or `pads` event doesn't write `bearing_size` or `response_type`. If you want the optional "also update the spec" checkbox (question 3), it sends a separate, ordinary `patchYoyo()`, so it's an explicit edit the user made.
 - **Since last clean, which needs both features:** the detail hero shows "14 throw-days since last clean", counted as throw days after the latest `clean`. It only appears when both exist.
 - **Due for a clean:** an Insights `insightCard` listing in-hand yoyos past the threshold, fed by the same `GET /api/events?type=throw,clean` read. It's hidden when the setting is empty or there are no cleans.
@@ -47,8 +51,15 @@ Timeline rows (icon rail, date, body), the log form, and the collapsed throw sum
 
 - Log, edit, and delete each type. A delete leaves a tombstone that shows up in `/api/sync/events`.
 - Log two maintenance events on the same day and get two rows. Retyping a row to `throw` is rejected.
+- Log a contest, and that day's throw exists. Log a second contest on the same yoyo and day (another division), and you get two contest rows but still one throw. Delete a contest and its throw remains. Logging a contest on a day whose throw was un-ticked revives it.
+- Push a contest alone through `/api/sync/events`, and no throw is created server-side.
+- Contest names autocomplete from earlier entries, and the Competition record card lists each contest with the right yoyo.
 - Pull a `type` the web doesn't know through sync, and check it renders as "Other".
 - The timeline shows the seller/buyer entries from the yoyo fields, and editing `seller` changes them without touching any events.
 - With some throws and a clean logged, the "throw-days since last clean" count is correct. With the threshold set, the Insights card lists the right yoyos, and clearing the setting hides it.
 - Read-only mode, demo mode, and public viewers get the same results as the throw log.
 - A backup round-trip keeps every event.
+
+---
+
+**Edit:** added the `contest` type: a web-logged contest also ensures that day's throw, sync push stays literal, plus the timeline highlight, the Competition record card, and test cases.
