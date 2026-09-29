@@ -20,23 +20,37 @@ Stored as `yoyo_events.type`, with optional structured details in `data` and fre
 
 | type | meaning | `data` (all optional) |
 |---|---|---|
-| `clean` | bearing cleaned (and relubed) | `{ "lube": "..." }` |
+| `clean` | bearing fully cleaned (and relubed) | `{ "lube": "..." }` |
+| `lube` | lube only, no clean | `{ "lube": "..." }` |
 | `bearing` | bearing replaced | `{ "bearing": "KonKave", "size": "C" }` |
 | `pads` | response pads replaced | `{ "response": "..." }` |
 | `string` | string changed | `{ "string": "..." }` |
 | `mod` | modification (silicone recess, re-anodize, axle swap) | none; described in `note` |
+| `damage` | damage worth recording, fixed or not (a ding, a scuffed rim) | `{ "severity": "cosmetic" }` |
 | `repair` | fixed damage | none |
 | `contest` | you competed with it | `{ "contest": "2026 World Yo-Yo Contest", "division": "1A", "round": "Finals", "placement": 3 }` |
+| `milestone` | a personal first on this yoyo ("first landed Kwijibo") | `{ "trick": "..." }` |
+| `autograph` | signed by a player or designer | `{ "by": "...", "where": "..." }` |
+| `lent` | lent to someone | `{ "to": "Sam" }` |
+| `returned` | came back from a loan | none |
 | `history` | provenance from before you owned it ("ran by X at 2019 Worlds") | `{ "from": "..." }` |
 | `note` | anything else worth dating | none |
 
 These use random v4 ids, since several can happen on the same day. Because sync stores unknown types as-is, the Apple app or a later PR can add a type without a server change first.
 
-**A contest is more than "thrown today," and it also counts as a throw.** It gets its own type rather than a flag in the day's throw row. Throw rows are a per-day on/off with a derived id, so a mistaken un-tick of "used today" would destroy the contest details with it, and a derived id allows only one row per day, which rules out entering 1A and 3A at the same event. Logging a contest also creates that day's throw. That's idempotent, because the throw's id is derived, so Most thrown, Gathering dust, and "throw-days since last clean" count competition days without special cases. Deleting the contest later leaves the throw, which is still true. `contest` is distinct from `history`: `contest` is *you* competing, and `history` is what happened before you owned it.
+**A contest is more than "thrown today," and it also counts as a throw.** The same goes for a `milestone`. Each gets its own type rather than a flag in the day's throw row. Throw rows are a per-day on/off with a derived id, so a mistaken un-tick of "used today" would destroy the contest details with it, and a derived id allows only one row per day, which rules out entering 1A and 3A at the same event. Logging a contest or milestone also creates that day's throw. That's idempotent, because the throw's id is derived, so Most thrown, Gathering dust, and "throw-days since last clean" count competition days without special cases. Deleting the contest later leaves the throw, which is still true. `contest` is distinct from `history`: `contest` is *you* competing, and `history` is what happened before you owned it.
+
+**Lube isn't a clean.** Players re-lube far more often than they fully clean. If lube-only days logged as `clean`, the "Due for a clean" reminder would reset too early. The reminder resets on `clean` or `bearing` (a new bearing is a clean one) and ignores `lube`.
+
+**Where is it? Worked out, not stored.** A "Lent to Sam since Aug 3" badge comes from the latest `lent` with no later `returned`. There's no status field to keep in sync, and a `returned` logged from any device clears it everywhere.
+
+**`autograph`, not `signed`.** `signature` is already a yoyo field meaning a signature *model* (a player or maker collab), so an autograph event gets a name that can't be confused with it.
+
+**No photo or video types.** Those belong to the media redesign you described on #7, so this proposal stays out of that area on purpose.
 
 **One source of truth for acquisition and sale.** The timeline shows `purchase_date`/`seller` and `sold_date`/`buyer` as entries rendered from the existing yoyo fields, not as duplicate events. There's no second copy to drift out of sync.
 
-**Events don't rewrite specs.** Logging a `bearing` swap doesn't silently change `bearing_size`. Automatic writes to the yoyo record would bump `updated_at` and could beat a real edit from another device in last-writer-wins. If it's wanted, an explicit "also update the spec" checkbox would make a normal yoyo edit the user chose.
+**Events don't rewrite specs.** Logging a `bearing` swap doesn't silently change `bearing_size`, and logging `damage` doesn't change `condition`. Automatic writes to the yoyo record would bump `updated_at` and could beat a real edit from another device in last-writer-wins. If it's wanted, an explicit "also update the spec" checkbox would make a normal yoyo edit the user chose.
 
 ## Why share one table with the throw log
 
@@ -52,7 +66,8 @@ The types above, and on the detail view:
 
 - a **timeline** of events and the acquisition/sale entries
 - a **Log event** quick-add (type picker, date defaulting to today, note, and the type's optional fields), with contest names autocompleting from earlier entries so several yoyos group under the same contest without a separate contests table
-- a highlighted contest entry in the timeline ("3rd · 1A Finals · 2026 World Yo-Yo Contest")
+- highlighted contest and milestone entries in the timeline ("3rd · 1A Finals · 2026 World Yo-Yo Contest", "First landed Kwijibo")
+- a **lent** badge on the card and detail hero while a loan is open, and a "Lent out" quick filter
 - edit and delete through `PUT`/`DELETE /api/events/:uuid`
 
 In Insights, a **Competition record** card listing contests, placements, and the yoyo used each time. If the throw log has landed, add "throw-days since last clean" and the Insights "Due for a clean" list. Owner-only, like the rest of the events table. No new dependencies.
@@ -67,5 +82,7 @@ In Insights, a **Competition record** card listing contests, placements, and the
 ---
 
 **Edit:** added the `contest` type, and the reasoning for why a contest is its own type that also counts as a throw.
+
+**Edit 2:** added `lube`, `damage`, `milestone`, `autograph`, and `lent`/`returned`, plus the reasoning for each and an explicit "no photo or video types" note.
 
 **Related:** #14 proposes the date convention both event proposals rely on. It also normalizes `purchase_date`/`sold_date`, which this timeline's "Bought from…" and "Sold to…" entries need in order to sort correctly. Its table shows how #14, #12, and this issue fit together as three PRs.
