@@ -51,7 +51,7 @@ The README says "Photos aren't imported." Add a companion zip whose files map to
 rows by a filename column or brand+model.
 
 ### 4. Maintenance & provenance log
-Dated per-yoyo events (clean, bearing, pads, string, mod, repair, contest, history, note)
+Dated per-yoyo events (clean, lube, bearing, pads, string, mod, damage, repair, contest, milestone, autograph, lent/returned, history, note)
 shown as a timeline on the detail view. It only adds types to #6's
 `yoyo_events` table. Acquisition and sale entries come from the existing yoyo
 fields, and events never rewrite specs. Sharing the table is what makes
@@ -79,7 +79,8 @@ guessing at favorites. This proposal defines the shared `yoyo_events` table
   types first.
 - The client sends its local date. Owner-only, and blocked by the existing
   write gate in read-only mode.
-- Derive "most thrown" and never auto-set `favorite`.
+- Derive the rankings and never auto-set `favorite`: Most thrown, EDC (thrown on half or more of the last 30 days), Collecting dust (3+ throw-days in the last year, none in the last 90), Shelf queen (at most 2 throw-days in the last year, owned 90+ days; never overlaps Collecting dust).
+- Past-day logging, bulk "Used today", streaks, a throw calendar (reusing Arrivals' `cal-grid`), and a Yoyo of the day that favors neglected yoyos.
 
 Full proposal: [proposals/throw-log.md](proposals/throw-log.md).
 
