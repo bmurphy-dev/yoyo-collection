@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS yoyo_events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_yoyo ON yoyo_events(yoyo_uuid, type, occurred_on);
 CREATE INDEX IF NOT EXISTS idx_events_rev  ON yoyo_events(rev);
+CREATE INDEX IF NOT EXISTS idx_events_day  ON yoyo_events(type, occurred_on); -- collection-wide date ranges for multi-year analytics
 ```
 
 - **Merge rule:** each row is last-writer-wins on `updated_at`. That reuses the timestamp validation and future-clock clamping push already has. Rows are never deleted by omission, only tombstoned.
@@ -53,6 +54,7 @@ CREATE INDEX IF NOT EXISTS idx_events_rev  ON yoyo_events(rev);
 - `GET /api/sync/events?since=&limit=` is a change feed with the same cursor semantics as `/api/sync/changes`.
 - `POST /api/sync/events` pushes rows, batch-capped like `/api/sync/push`.
 - `GET /api/events?type=&from=` is an owner-only compact read across the collection. Insights aggregates it client-side, the way `renderInsights()` already works. *(Corrected: this originally proposed adding aggregates to `/api/stats`, which the web UI doesn't use.)*
+- `GET /api/events/summary` and `GET /api/events/histogram` are owner-only server-side aggregates for spans longer than a year, where shipping raw rows would grow without bound.
 
 A client that never calls the new sync endpoints is unaffected. It just doesn't see or send events.
 
@@ -69,15 +71,18 @@ The table, the endpoints above, and the `throw` type.
 
 | ranking | rule |
 |---|---|
-| **Most thrown** | most throw-days in the chosen week, month, or year |
+| **Most thrown** | most throw-days in the chosen period: week, month, or year, plus the long-term spans below |
 | **Everyday carry (EDC)** | thrown on at least half of the last 30 days, so it's the consistent pick rather than one binge weekend |
 | **Collecting dust** | a real thrower that's gone quiet: thrown on 3+ days in the last year, but none in the last 90 |
 | **Shelf queen** | thrown on at most 2 days in the last year (never counts), and owned for 90+ days (by `purchase_date`, falling back to `created_at`), so new arrivals aren't labeled. Taking it off the shelf once or twice doesn't cost the title. For collectors this is a badge of honor, not a nag. |
 
 Collecting dust and Shelf queen split on that 2-day line, so a yoyo is never both. The thresholds are constants in `app.js`, easy to tune or turn into settings later.
 
+**Snapshots for the rankings, long spans for the analytics.** The rankings deliberately use short, current windows (30 days, 90 days, 1 year) so they describe how the collection is used *now*. The long-term analytics go further back: **2, 3, 5, and 10 years, and all time**. A throw log becomes more valuable the longer it runs, and "my most thrown over five years" is a different, more interesting answer than "this month." Spans longer than the log's history are hidden, so someone who started logging eight months ago isn't offered a 5-year view.
+
 **Insights and detail view:**
-- A "Most thrown" card with a week/month/year switch, reusing the existing `barChart` helper.
+- A "Most thrown" card with a Week / Month / Year / 2y / 3y / 5y / 10y / All switch, reusing the existing `barChart` helper.
+- A **Long-term trends** card: throw-days per year (or per month within a chosen span) across the collection, so you can see a year where the hobby took off or went quiet. On the detail view, a per-yoyo "year by year" line.
 - EDC, Collecting dust, and Shelf queen lists.
 - "Most thrown" and the current **streak** ("5 days in a row") join the standouts row next to Most valuable and Heaviest.
 - A **throw calendar** that reuses the Arrivals calendar's month grid, with throw days marked.
@@ -96,6 +101,8 @@ No new dependencies. Everything after the toggle is derived, so any of it can be
 Happy to build it on whatever shape you land on, or to hold off if it's better timed after the media work.
 
 ---
+
+**Edit 3:** long-term analytics reach back 2, 3, 5, and 10 years and all time (Most thrown periods, a Long-term trends card, and the calendar navigating past a year), backed by server-side aggregates. The rankings keep their 30-day, 90-day, and 1-year snapshots.
 
 **Edit 2:** Shelf queen now allows up to 2 throw-days a year, and Collecting dust starts at 3+, so the two never overlap.
 
