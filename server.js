@@ -10,14 +10,15 @@ import express from 'express';
 import multer from 'multer';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { stringify } from 'csv-stringify/sync';
 import { parse } from 'csv-parse/sync';
-import AdmZip from 'adm-zip';
 import archiver from 'archiver';
 import { track as trackPackage, configuredCarriers } from './carriers.js';
 import { DAY_FIELDS, normalizeDay, localDayStamp } from './dates.js';
+import { listEntries, extractEntry } from './unzip.js';
 import db, { DB_PATH, openDatabase, backfillUuids, backfillPhotoUuids, nextRev } from './db.js';
 
 // sharp (image thumbnails) is native; on some shared hosts it may not install.
@@ -1691,30 +1692,112 @@ app.get('/api/backup.zip', (req, res) => {
 });
 
 // Restore REPLACES the entire collection with the contents of a backup zip.
-app.post('/api/restore', uploadZip.single('file'), (req, res) => {
+// One-shot upload: fine for small backups and for API clients (the native
+// apps' "Publish to website" posts a database-only zip here). The web UI uses
+// the chunked endpoints below instead, since a full backup can be bigger than
+// the request size a reverse proxy will accept.
+app.post('/api/restore', uploadZip.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No backup file uploaded.' });
   // Every path out of here has to drop the uploaded temp file, including the
   // early validation returns below.
   try {
-    restoreFromZip(req.file.path, res);
+    await restoreFromZip(req.file.path, res);
   } finally {
     fs.rmSync(req.file.path, { force: true });
   }
 });
 
-function restoreFromZip(zipPath, res) {
+// ---- Chunked restore upload ----
+// A backup with photos is easily over a gigabyte, and shared hosts put a cap
+// on request bodies in the proxy in front of Node (Namecheap's answers 413
+// long before multer's own limit). So the browser sends the file in pieces:
+// start → PUT each chunk at its byte offset → finish, which restores from the
+// assembled file. A PUT is idempotent (a retried chunk overwrites itself), so
+// a dropped connection or a 429 costs one chunk, not the whole upload.
+const RESTORE_CHUNK_MAX = 16 * 1024 * 1024;
+const RESTORE_TOTAL_MAX = Number(process.env.RESTORE_MAX_MB || 8192) * 1024 * 1024;
+const UPLOAD_ID_RE = /^[0-9a-f-]{36}$/;
+const chunkPath = (id) => path.join(SCRATCH_DIR, `chunked-${id}.zip`);
+
+app.post('/api/restore/uploads', (req, res) => {
+  const size = Number(req.body?.size);
+  if (!Number.isSafeInteger(size) || size <= 0) return res.status(400).json({ error: 'Missing file size.' });
+  if (size > RESTORE_TOTAL_MAX) {
+    return res.status(400).json({ error: `Backup is larger than this server allows (${Math.round(RESTORE_TOTAL_MAX / 1048576)}MB; see RESTORE_MAX_MB).` });
+  }
+  // An upload abandoned mid-way (tab closed) would otherwise sit in scratch
+  // until the next restart; clear any older than a day.
+  for (const f of fs.readdirSync(SCRATCH_DIR)) {
+    const fp = path.join(SCRATCH_DIR, f);
+    if (f.startsWith('chunked-') && Date.now() - fs.statSync(fp).mtimeMs > 86_400_000) fs.rmSync(fp, { force: true });
+  }
+  const id = crypto.randomUUID();
+  fs.writeFileSync(chunkPath(id), '');
+  res.status(201).json({ id, chunkSize: RESTORE_CHUNK_MAX });
+});
+
+app.put('/api/restore/uploads/:id', async (req, res) => {
+  const { id } = req.params;
+  const offset = Number(req.query.offset);
+  const file = chunkPath(id);
+  if (!UPLOAD_ID_RE.test(id) || !fs.existsSync(file)) return res.status(404).json({ error: 'Upload not found — start the restore again.' });
+  const have = fs.statSync(file).size;
+  // Chunks arrive in order; a retry may resend the last one, so accept any
+  // offset up to what's already on disk and drop whatever followed it.
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > have) {
+    return res.status(409).json({ error: 'Chunk out of order.', received: have });
+  }
+  if (offset < have) fs.truncateSync(file, offset);
+  let written = 0;
+  const out = fs.createWriteStream(file, { flags: 'r+', start: offset });
+  try {
+    await pipeline(req, async function* (source) {
+      for await (const buf of source) {
+        written += buf.length;
+        if (written > RESTORE_CHUNK_MAX || offset + written > RESTORE_TOTAL_MAX) throw Object.assign(new Error('Chunk too large.'), { status: 413 });
+        yield buf;
+      }
+    }, out);
+  } catch (err) {
+    fs.truncateSync(file, offset);
+    return res.status(err.status || 400).json({ error: err.message });
+  }
+  res.json({ received: offset + written });
+});
+
+app.post('/api/restore/uploads/:id/finish', async (req, res) => {
+  const { id } = req.params;
+  const file = chunkPath(id);
+  if (!UPLOAD_ID_RE.test(id) || !fs.existsSync(file)) return res.status(404).json({ error: 'Upload not found — start the restore again.' });
+  try {
+    const have = fs.statSync(file).size;
+    if (have !== Number(req.body?.size)) {
+      return res.status(400).json({ error: `Upload incomplete (${have} of ${req.body?.size} bytes) — try the restore again.` });
+    }
+    await restoreFromZip(file, res);
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
+});
+
+app.delete('/api/restore/uploads/:id', (req, res) => {
+  if (UPLOAD_ID_RE.test(req.params.id)) fs.rmSync(chunkPath(req.params.id), { force: true });
+  res.status(204).end();
+});
+
+async function restoreFromZip(zipPath, res) {
   let entries;
-  try { entries = new AdmZip(zipPath).getEntries(); }
+  try { entries = listEntries(zipPath); }
   catch { return res.status(400).json({ error: 'That file is not a valid .zip backup.' }); }
 
-  const dbEntry = entries.find((e) => !e.isDirectory && path.basename(e.entryName) === 'yoyos.db');
+  const dbEntry = entries.find((e) => !e.isDirectory && path.basename(e.name) === 'yoyos.db');
   if (!dbEntry) return res.status(400).json({ error: 'Backup is missing yoyos.db — is this a yoyo backup?' });
 
   // Open the backup DB from a temp file (read-only) and copy its rows in.
   const tmp = path.join(SCRATCH_DIR, `yoyo-restore-${Date.now()}.db`);
   let yoyoRows, photoRows, videoRows;
   try {
-    fs.writeFileSync(tmp, dbEntry.getData());
+    await extractEntry(zipPath, dbEntry, tmp);
     const src = openDatabase(tmp, { readOnly: true });
     yoyoRows = src.prepare('SELECT * FROM yoyos').all();
     photoRows = src.prepare('SELECT * FROM photos').all();
@@ -1730,6 +1813,23 @@ function restoreFromZip(zipPath, res) {
     // header and even a read-only open spawns -wal/-shm alongside it. Removing
     // just the .db left those two behind on every restore.
     for (const suffix of ['', '-wal', '-shm']) fs.rmSync(tmp + suffix, { force: true });
+  }
+
+  // Photo files go first (basename only — never trust paths inside the zip):
+  // they're additive, so if extraction fails part-way (disk full, corrupt
+  // entry) the collection itself hasn't been touched yet.
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  let photoFiles = 0;
+  try {
+    for (const e of entries) {
+      if (e.isDirectory || e.name.split('/')[0] !== 'uploads') continue;
+      const name = path.basename(e.name);
+      if (!name || name.startsWith('.')) continue;
+      await extractEntry(zipPath, e, path.join(UPLOAD_DIR, name));
+      photoFiles++;
+    }
+  } catch (err) {
+    return res.status(500).json({ error: `Could not restore photos (your collection was not changed): ${err.message}` });
   }
 
   const yoyoCols = new Set(db.prepare('PRAGMA table_info(yoyos)').all().map((c) => c.name));
@@ -1757,17 +1857,6 @@ function restoreFromZip(zipPath, res) {
   // give those a stable id so the unique index holds and they can sync later.
   backfillUuids(db);
   backfillPhotoUuids(db);
-
-  // Restore photo files (basename only — never trust paths inside the zip).
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-  let photoFiles = 0;
-  for (const e of entries) {
-    if (e.isDirectory) continue;
-    const parts = e.entryName.split('/');
-    if (parts[0] !== 'uploads') continue;
-    fs.writeFileSync(path.join(UPLOAD_DIR, path.basename(e.entryName)), e.getData());
-    photoFiles++;
-  }
 
   res.json({ yoyos: yoyoRows.length, photos: photoRows.length, videos: videoRows.length, photoFiles });
 }

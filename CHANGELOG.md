@@ -3,6 +3,24 @@
 All notable changes to this project are documented here. Every commit that
 changes app behavior gets an entry — newest first.
 
+## 2026-10-04
+- **Fix: restoring a large backup failed with "Request failed (413)".** A full
+  backup with photos is easily over a gigabyte, and shared hosts reject a
+  request body that size in the proxy in front of Node, before the app sees
+  it. (The app also capped a restore at 200MB.) Restore now works at any size:
+  - **The browser uploads in chunks** (new `/api/restore/uploads` routes),
+    with a progress readout. It starts at 8MB and halves on a 413 until chunks
+    fit the host's limit. Each chunk is retried on its own after a dropped
+    connection or a rate-limit 429, so a hiccup costs seconds, not the upload.
+  - **The server unpacks the zip by streaming** (new `unzip.js`, Zip64-aware)
+    instead of adm-zip, which read the whole archive into memory. Restoring a
+    1.24GB backup now peaks under 100MB. The `adm-zip` dependency is gone.
+  - **Photos are written before the collection is replaced**, so a restore
+    that fails part-way (disk full, corrupt file) leaves the collection as it
+    was.
+  - New optional `RESTORE_MAX_MB` (default 8192). The one-shot `POST
+    /api/restore` used by the native apps' "Publish to website" is unchanged.
+
 ## 2026-10-03
 - **Dates: one convention, and five bugs it fixes** (issue #14). Calendar days
   (`purchase_date`, `sold_date`, `eta`) are local `YYYY-MM-DD`; instants stay

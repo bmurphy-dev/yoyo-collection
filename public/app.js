@@ -54,6 +54,21 @@ function toast(message, kind = '') {
   setTimeout(() => { el.classList.add('leaving'); setTimeout(() => el.remove(), 220); }, ttl);
 }
 
+// A toast that stays up until done() — for long operations that report progress.
+function progressToast(message) {
+  const wrap = document.getElementById('toastWrap');
+  if (!wrap) return { update() {}, done() {} };
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.innerHTML = `<span class="toast-dot"></span><span></span>`;
+  el.lastChild.textContent = message;
+  wrap.appendChild(el);
+  return {
+    update(m) { el.lastChild.textContent = m; },
+    done() { el.classList.add('leaving'); setTimeout(() => el.remove(), 220); },
+  };
+}
+
 // Promise-based styled confirm dialog (replaces native confirm()).
 function confirmDialog({ title = 'Are you sure?', message = '', confirmText = 'Confirm', cancelText = 'Cancel', danger = false } = {}) {
   return new Promise((resolve) => {
@@ -232,13 +247,16 @@ function saveView() {
 }
 
 // ---- API helpers ----
-async function api(url, opts = {}) {
-  const headers = { ...(opts.headers || {}) };
-  // Token auth survives iframes/mobile where third-party cookies are blocked.
+// Token auth survives iframes/mobile where third-party cookies are blocked.
+function authHeaders(extra = {}) {
+  const headers = { ...extra };
   let token = null;
   try { token = localStorage.getItem('yoyoToken'); } catch { /* ignore */ }
   if (token) headers.Authorization = 'Bearer ' + token;
-  const res = await fetch(url, { ...opts, headers });
+  return headers;
+}
+async function api(url, opts = {}) {
+  const res = await fetch(url, { ...opts, headers: authHeaders(opts.headers) });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `Request failed (${res.status})`);
@@ -4618,18 +4636,65 @@ $('#restoreInput').addEventListener('change', async (e) => {
     e.target.value = '';
     return;
   }
-  const fd = new FormData();
-  fd.append('file', file);
+  const status = progressToast('Uploading backup… 0%');
   try {
-    const r = await api('/api/restore', { method: 'POST', body: fd });
+    const r = await uploadBackup(file, (frac) => {
+      status.update(frac < 1 ? `Uploading backup… ${Math.floor(frac * 100)}%` : 'Restoring — unpacking photos…');
+    });
     await loadAll();
     toast(`Restore complete — ${r.yoyos} yoyos, ${r.photoFiles} photos.`, 'ok');
   } catch (err) {
     toast('Restore failed: ' + err.message, 'error');
   } finally {
+    status.done();
     e.target.value = '';
   }
 });
+
+// Sends a backup in chunks (see the chunked-restore routes in server.js): a
+// full backup with photos can run past a gigabyte, more than the proxy in
+// front of a shared host accepts in one request. Each chunk is retried on its
+// own, so a flaky connection or the rate limiter costs seconds, not the upload.
+async function uploadBackup(file, onProgress) {
+  const json = { 'Content-Type': 'application/json' };
+  const { id, chunkSize: maxChunk } = await api('/api/restore/uploads', {
+    method: 'POST', headers: json, body: JSON.stringify({ size: file.size }),
+  });
+  // We can't know the proxy's body limit up front, so start modest and halve
+  // on a 413 until chunks fit.
+  let chunk = Math.min(maxChunk, 8 * 1024 * 1024);
+  let offset = 0, failures = 0;
+  try {
+    while (offset < file.size) {
+      const end = Math.min(offset + chunk, file.size);
+      let res = null;
+      try {
+        res = await fetch(`/api/restore/uploads/${id}?offset=${offset}`, {
+          method: 'PUT', headers: authHeaders({ 'Content-Type': 'application/octet-stream' }), body: file.slice(offset, end),
+        });
+      } catch { /* network drop — retried below */ }
+      if (res && res.ok) {
+        offset = (await res.json()).received;
+        failures = 0;
+        onProgress(offset / file.size);
+        continue;
+      }
+      const body = res ? await res.json().catch(() => ({})) : {};
+      if (res && res.status === 413 && chunk > 256 * 1024) { chunk = Math.floor(chunk / 2); continue; }
+      if (res && res.status === 409 && Number.isSafeInteger(body.received)) { offset = body.received; continue; }
+      const retryable = !res || res.status === 429 || res.status >= 500;
+      if (!retryable || ++failures > 6) throw new Error(body.error || (res ? `Upload failed (${res.status})` : 'Connection lost'));
+      const wait = res && res.status === 429 ? Number(res.headers.get('Retry-After')) || 10 : 2 ** failures;
+      await new Promise((r) => setTimeout(r, wait * 1000));
+    }
+    return await api(`/api/restore/uploads/${id}/finish`, {
+      method: 'POST', headers: json, body: JSON.stringify({ size: file.size }),
+    });
+  } catch (err) {
+    fetch(`/api/restore/uploads/${id}`, { method: 'DELETE', headers: authHeaders() }).catch(() => {});
+    throw err;
+  }
+}
 
 // ---- Settings: design language ----
 // (No light/dark control: both design languages are light-only, so the old

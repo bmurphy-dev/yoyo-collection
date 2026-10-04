@@ -105,6 +105,7 @@ the app runs fully open on port 3000. Copy [`.env.example`](.env.example) to
 | `PORT` | HTTP port (default `3000`) |
 | `DB_PATH` / `UPLOAD_DIR` | Where the database and photos live |
 | `RESTORE_TMP_DIR` | Where Restore puts its scratch folder (defaults to alongside `DB_PATH`) |
+| `RESTORE_MAX_MB` | Largest backup Restore accepts (default 8192 MB) |
 | `ADMIN_PASSWORD` | Public read-only + owner login to edit |
 | `READ_ONLY` | Make the whole app read-only |
 | `AUTH_USER` / `AUTH_PASS` | HTTP Basic auth over the entire app (fully private) |
@@ -137,6 +138,12 @@ snapshot of the database *and* photos, and **Restore** to bring it back. That
 zip is safe to store anywhere — *this* is the file to drop in Dropbox/Drive or
 keep off-machine. Both data paths are git-ignored so your collection is never
 committed.
+
+Restore handles multi-gigabyte backups. The browser uploads the file in small
+chunks, which keeps it under the request-size limit most shared hosts and
+reverse proxies enforce, and the server unpacks it one photo at a time rather
+than loading it into memory. The server needs free disk for roughly twice the
+backup's size while a restore runs.
 
 ## Sample data
 Want a populated collection to explore (or for screenshots / a public demo)?
