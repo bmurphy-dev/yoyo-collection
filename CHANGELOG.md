@@ -20,6 +20,11 @@ changes app behavior gets an entry — newest first.
     was.
   - New optional `RESTORE_MAX_MB` (default 8192). The one-shot `POST
     /api/restore` used by the native apps' "Publish to website" is unchanged.
+- **Fix: "Publish to website" reported dozens of failed photos with the rate
+  limiter on.** The apps send a HEAD for every photo to skip ones already
+  uploaded, and only photo GETs were exempt from the limiter, so a large
+  publish exhausted `RATE_LIMIT_MAX` on checks alone and the uploads after it
+  got 429s. Photo HEADs are now exempt too.
 
 ## 2026-10-03
 - **Dates: one convention, and five bugs it fixes** (issue #14). Calendar days
