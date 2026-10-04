@@ -24,6 +24,10 @@ services:
       # in to edit. Leave unset to run fully open (anyone can edit).
       # ADMIN_PASSWORD: change-me
       #
+      # Your time zone — dates the backup / CSV export filenames by your clock
+      # rather than UTC.
+      # TZ: America/New_York
+      #
       # More options — private mode, request throttling, carrier ETA lookups —
       # are listed in .env.example.
     restart: unless-stopped

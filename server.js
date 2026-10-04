@@ -17,6 +17,7 @@ import { parse } from 'csv-parse/sync';
 import AdmZip from 'adm-zip';
 import archiver from 'archiver';
 import { track as trackPackage, configuredCarriers } from './carriers.js';
+import { DAY_FIELDS, normalizeDay, localDayStamp } from './dates.js';
 import db, { DB_PATH, openDatabase, backfillUuids, backfillPhotoUuids, nextRev } from './db.js';
 
 // sharp (image thumbnails) is native; on some shared hosts it may not install.
@@ -434,9 +435,12 @@ function toNumber(v) {
 
 // Coerces a raw request body into a { column: value } map matching WRITE_COLS,
 // so the caller can hand it straight to a parameterized INSERT/UPDATE.
+// Every write path (POST/PUT, CSV import, sync push) comes through here, so
+// this is where day fields get normalized.
 function sanitizeYoyo(body) {
   const out = {};
   for (const f of TEXT_FIELDS) out[f] = body[f] == null ? '' : String(body[f]).trim();
+  for (const f of DAY_FIELDS) out[f] = normalizeDay(out[f]);
   for (const f of NUMBER_FIELDS) out[f] = toNumber(body[f]);
   for (const f of BOOL_FIELDS) out[f] = body[f] ? 1 : 0;
   return out;
@@ -1530,7 +1534,7 @@ app.get('/api/export.csv', (req, res) => {
   });
 
   const csv = stringify(records, { header: true, columns: headers });
-  const date = new Date().toISOString().slice(0, 10);
+  const date = localDayStamp();
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="yoyo-collection-${date}.csv"`);
   res.send(csv);
@@ -1661,7 +1665,7 @@ app.get('/api/backup.zip', (req, res) => {
   // Flush the write-ahead log so the copied DB file is complete and current.
   db.pragma('wal_checkpoint(TRUNCATE)');
 
-  const date = new Date().toISOString().slice(0, 10);
+  const date = localDayStamp();
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', `attachment; filename="yoyo-backup-${date}.zip"`);
 

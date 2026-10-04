@@ -3,6 +3,32 @@
 All notable changes to this project are documented here. Every commit that
 changes app behavior gets an entry — newest first.
 
+## 2026-10-03
+- **Dates: one convention, and five bugs it fixes** (issue #14). Calendar days
+  (`purchase_date`, `sold_date`, `eta`) are local `YYYY-MM-DD`; instants stay
+  UTC. Written down in `CONTRIBUTING.md` and `dates.js`.
+  - **Bulk "Mark sold" records your date, not UTC's.** It sliced the date off
+    `toISOString()`, so anyone in the Americas marking a sale in the evening
+    got tomorrow's date. It now uses the browser's local calendar.
+  - **Date columns sort chronologically** on Collection, For Sale, Arrivals and
+    Sold, with blanks last in both directions. They were compared as text, so
+    `6/15/2026` sorted after `2026-09-01`.
+  - **Purchase and sold dates are normalized on every write** — save, CSV
+    import, and sync push — to `YYYY-MM-DD`. `a/b/yyyy` reads as month/day
+    unless the first number is over 12; anything unrecognizable (`Spring 2024`)
+    is kept as typed. `normalize-dates.mjs` fixes rows stored before this (dry
+    run by default, `--apply` to write; bumps `rev` so synced devices re-pull).
+  - **The edit form no longer rewrites a day/month date into the wrong year.**
+    `15/6/2026` was read as month 15 and rolled over to 2027-03-06, which Save
+    then wrote back. Impossible dates now read as no date at all, and free text
+    without a day in it (`Spring 2024`, `March 2024`) is no longer turned into
+    the 1st of the month.
+  - **Saving the edit form no longer erases a date it can't display.** A stored
+    value the date picker couldn't show (`Spring 2024`, `TBD`) was saved back
+    as blank; it's now kept unless you change that field.
+  - **Backup and CSV filenames use local time**, so a `TZ` setting is respected
+    (new optional `TZ` in `.env.example` / `docker-compose.yml`).
+
 ## 2026-09-05 — Release v1.2.0
 - **Read-only mode: the way back, and the owner's whole view** — three fixes
   to the follow-through of the read-only switch:

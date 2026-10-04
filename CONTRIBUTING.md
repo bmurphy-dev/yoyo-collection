@@ -16,6 +16,7 @@ No build step — the front end is plain HTML/CSS/JS in `public/`.
 - `server.js` — Express app + REST API
 - `db.js` — SQLite (Node's built-in `node:sqlite`) wrapper + schema bootstrap
 - `carriers.js` — UPS / USPS / FedEx tracking lookups
+- `dates.js` — calendar-day normalization (see "Dates" below)
 - `schema.sql` — database schema
 - `public/` — the front end (`index.html`, `app.js`, `styles.css`)
 
@@ -30,6 +31,18 @@ No build step — the front end is plain HTML/CSS/JS in `public/`.
 - **Update [CHANGELOG.md](CHANGELOG.md)** with a short entry for any
   behavior-changing commit (new feature, fix, migration) — newest entry on
   top, grouped by date.
+
+## Dates
+The app stores two kinds of time, and mixing them up causes off-by-one bugs:
+- **Calendar days** (`purchase_date`, `sold_date`, `eta`) have no time zone.
+  Store them as `YYYY-MM-DD` in the user's local calendar. In the browser use
+  `localDay()` / `parseDay()` from `app.js`; never take a day from
+  `new Date().toISOString()`, which is the UTC date and is tomorrow for
+  anyone in the Americas after about 5pm. On the server, `dates.js`
+  normalizes them on every write.
+- **Instants** (`created_at`, `updated_at`, `deleted_at`, `sale_listed_at`) are
+  UTC and keep their existing formats — sync compares them as strings.
+- **Free-text dates** (`release_date`: "2025", "Spring 2024") stay as typed.
 
 ## Reporting bugs / ideas
 Open an issue with steps to reproduce (for bugs) or the problem you're trying to
