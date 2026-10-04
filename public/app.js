@@ -439,7 +439,8 @@ function filteredYoyos() {
   list.sort((a, b) => {
     const av = valueOf(a, key), bv = valueOf(b, key);
     let r;
-    if (key === 'favorite' || key === 'in_hand') r = (av ? 1 : 0) - (bv ? 1 : 0);
+    if (DAY_KEYS.has(key)) { if ((r = cmpDays(av, bv, flip))) return r; }
+    else if (key === 'favorite' || key === 'in_hand') r = (av ? 1 : 0) - (bv ? 1 : 0);
     else if (numeric) r = (av ?? -Infinity) - (bv ?? -Infinity);
     else r = String(av || '').localeCompare(String(bv || ''));
     if (r === 0 && key !== 'brand') r = String(a.brand || '').localeCompare(String(b.brand || ''));
@@ -1739,32 +1740,67 @@ let calMonth = firstOfMonth(new Date());
 let calSelected = null;
 function firstOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function sameDay(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
-// Parses a stored ETA (ISO "YYYY-MM-DD", "M/D/YYYY", or whatever Date() can
-// handle) into a local midnight Date, or null if unparseable.
-function parseETA(s) {
-  const t = String(s || '').trim();
-  if (!t) return null;
-  let m;
-  if ((m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) return new Date(+m[1], +m[2] - 1, +m[3]);
-  if ((m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/))) {
-    let yr = +m[3]; if (yr < 100) yr += 2000;
-    return new Date(yr, +m[1] - 1, +m[2]);
-  }
-  const d = new Date(t);
-  return isNaN(d) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
-}
-// Format any stored ETA (free-text or ISO) to YYYY-MM-DD for an <input type="date">.
-function toDateInputValue(s) {
-  const d = parseETA(s);
-  if (!d) return '';
+// ---- Calendar days ----
+// Day fields (purchase_date, sold_date, eta) are local calendar days stored as
+// "YYYY-MM-DD" — produced here from the user's clock, never sliced off a UTC
+// instant (toISOString() gives tomorrow's date to anyone in the Americas after
+// ~5pm). Instants (created_at, updated_at, sale_listed_at) stay UTC. Same rules
+// as the server's dates.js.
+
+// Today (or `d`) as a local "YYYY-MM-DD".
+function localDay(d = new Date()) {
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
+// A local-midnight Date for (y, m, d), or null if that day doesn't exist —
+// new Date() would silently roll 2026-14-06 over into March 2027.
+function realDay(y, m, d) {
+  const t = new Date(y, m - 1, d);
+  return t.getFullYear() === y && t.getMonth() === m - 1 && t.getDate() === d ? t : null;
+}
+// Parses a stored day (ISO "YYYY-MM-DD", "M/D/YYYY", or dated free text that
+// Date() can handle) into a local midnight Date, or null if unparseable. a/b/yyyy reads
+// as month/day unless a > 12, which can only be day/month.
+function parseDay(s) {
+  const t = String(s || '').trim();
+  if (!t) return null;
+  let m;
+  if ((m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) return realDay(+m[1], +m[2], +m[3]);
+  if ((m = t.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2}|\d{4})$/))) {
+    let yr = +m[3]; if (m[3].length === 2) yr += 2000;
+    const [a, b] = [+m[1], +m[2]];
+    return a > 12 ? realDay(yr, b, a) : realDay(yr, a, b);
+  }
+  // Free text ("Sep 30, 2026") only counts if it names a day of the month —
+  // Date() reads "Spring 2024" or "March 2024" as the 1st, and the edit form
+  // would then save that invented day over the original text.
+  if (!/(^|\D)\d{1,2}(\D|$)/.test(t)) return null;
+  const d = new Date(t);
+  return isNaN(d) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+// Format any stored day (free-text or ISO) to YYYY-MM-DD for an <input type="date">.
+function toDateInputValue(s) {
+  const d = parseDay(s);
+  return d ? localDay(d) : '';
+}
+// Whole calendar days from today to `d` (negative = past). Counted on dates,
+// not elapsed milliseconds, so DST and the time of day can't shift it.
+function daysFromToday(d) {
+  const now = new Date();
+  return Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) -
+    Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+}
+// Chronological compare of two stored days for a ledger sort. Blank or
+// unparseable days sort last in either direction, so `flip` is applied here.
+const DAY_KEYS = new Set(['purchase_date', 'sold_date', 'eta']);
+function cmpDays(a, b, flip) {
+  const x = parseDay(a), y = parseDay(b);
+  if (!x || !y) return (x ? 0 : 1) - (y ? 0 : 1);
+  return (x - y) * flip;
+}
 // "Arrives in 3 days" / "Was due 2 days ago" style label for an arrival date.
 function relativeETA(d) {
-  const today = new Date();
-  const a = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const days = Math.round((d - a) / 86400000);
+  const days = daysFromToday(d);
   if (days === 0) return 'Arrives today';
   if (days === 1) return 'Arrives tomorrow';
   if (days > 1) return `Arrives in ${days} days`;
@@ -1777,7 +1813,7 @@ function arrivalGroups() {
   const map = new Map();
   for (const y of yoyos) {
     if (y.in_hand) continue;
-    const d = parseETA(y.eta);
+    const d = parseDay(y.eta);
     if (!d) continue;
     const key = d.getTime();
     if (!map.has(key)) map.set(key, { day: d, items: [] });
@@ -1858,10 +1894,11 @@ function arrivalsFilteredSorted() {
   const key = arrivalsView.sort;
   const numeric = FIELD_BY_KEY[key]?.num || NUMERIC_KEYS.has(key);
   const flip = arrivalsView.sortDir === 'desc' ? -1 : 1;
-  const etaTime = (y) => { const d = parseETA(y.eta); return d ? d.getTime() : Infinity; };
+  const etaTime = (y) => { const d = parseDay(y.eta); return d ? d.getTime() : Infinity; };
   items.sort((a, b) => {
     let r;
-    if (key === 'arrives_in') r = cmpNum(etaTime(a), etaTime(b));
+    if (DAY_KEYS.has(key)) { if ((r = cmpDays(valueOf(a, key), valueOf(b, key), flip))) return r; }
+    else if (key === 'arrives_in') r = cmpNum(etaTime(a), etaTime(b));
     else if (numeric) r = cmpNum(valueOf(a, key) ?? -Infinity, valueOf(b, key) ?? -Infinity);
     else r = String(valueOf(a, key) ?? '').localeCompare(String(valueOf(b, key) ?? ''));
     if (r === 0) r = cmpNum(etaTime(a), etaTime(b));   // soonest-arriving tiebreak
@@ -1871,11 +1908,11 @@ function arrivalsFilteredSorted() {
 }
 function arrivalsCellHTML(y, c) {
   if (c.key === 'arrives_in') {
-    const d = parseETA(y.eta);
+    const d = parseDay(y.eta);
     return `<td>${d ? esc(relativeETA(d)) : '<span class="muted-sm">No date</span>'}</td>`;
   }
   if (c.key === 'eta') {
-    const d = parseETA(y.eta);
+    const d = parseDay(y.eta);
     return `<td>${d ? esc(d.toLocaleDateString()) : '—'}</td>`;
   }
   if (c.key === 'tracking') {
@@ -2007,7 +2044,7 @@ function renderArrivals() {
     listHTML = `<div class="arrivals-block"><h3>Upcoming arrivals</h3>` +
       (upcoming.length ? upcoming.flatMap((g) => g.items.map((y) => arrivalRow(y, relativeETA(g.day)))).join('') : '<p class="hint">Nothing scheduled.</p>') + `</div>`;
   }
-  const nd = yoyos.filter((y) => !y.in_hand && !parseETA(y.eta));
+  const nd = yoyos.filter((y) => !y.in_hand && !parseDay(y.eta));
   const ndHTML = nd.length ? `<div class="arrivals-block"><h3>On order · no date</h3>` + nd.map((y) => arrivalRow(y, 'Awaiting ship date')).join('') + `</div>` : '';
 
   const onWay = yoyos.filter((y) => !y.in_hand).length;
@@ -2185,7 +2222,8 @@ function saleFilteredSorted() {
   const cellVal = (y) => (key === 'days_listed' ? daysListed(y) : valueOf(y, key));
   list.sort((a, b) => {
     let r;
-    if (numeric) r = (cellVal(a) ?? -Infinity) - (cellVal(b) ?? -Infinity);
+    if (DAY_KEYS.has(key)) { if ((r = cmpDays(cellVal(a), cellVal(b), flip))) return r; }
+    else if (numeric) r = (cellVal(a) ?? -Infinity) - (cellVal(b) ?? -Infinity);
     else r = String(cellVal(a) ?? '').localeCompare(String(cellVal(b) ?? ''));
     if (r === 0) r = String(a.brand || '').localeCompare(String(b.brand || ''));
     return r * flip;
@@ -2476,7 +2514,7 @@ function openSaleStatusDialog(ids) {
       const status = card.querySelector('#statusNew').value;
       close();
       const changes = { sale_status: status };
-      if (status === 'Sold') changes.sold_date = new Date().toISOString().slice(0, 10);
+      if (status === 'Sold') changes.sold_date = localDay();
       let ok = 0, fail = 0;
       for (const id of ids) { try { await patchYoyo(id, changes); ok++; } catch { fail++; } }
       setSaleSelectMode(false);
@@ -2699,10 +2737,11 @@ function soldFilteredSorted() {
   const flip = soldView.sortDir === 'desc' ? -1 : 1;
   items.sort((a, b) => {
     let r;
-    if (numeric) r = (soldSortValue(a, key) ?? -Infinity) - (soldSortValue(b, key) ?? -Infinity);
+    if (DAY_KEYS.has(key)) { if ((r = cmpDays(soldSortValue(a, key), soldSortValue(b, key), flip))) return r; }
+    else if (numeric) r = (soldSortValue(a, key) ?? -Infinity) - (soldSortValue(b, key) ?? -Infinity);
     else r = String(soldSortValue(a, key) ?? '').localeCompare(String(soldSortValue(b, key) ?? ''));
-    if (r === 0) r = String(b.sold_date || '').localeCompare(String(a.sold_date || ''));
-    return r * flip;
+    if (r) return r * flip;
+    return cmpDays(b.sold_date, a.sold_date, 1);   // tiebreak: most recent sale first
   });
   return items;
 }
@@ -3578,6 +3617,7 @@ function openAdd() {
     const input = form.elements[group.dataset.for];
     if (input) input.value = '';
   });
+  form.querySelectorAll('input[type="date"]').forEach((el) => { el.dataset.raw = ''; });
   $('#deleteBtn').classList.add('hidden');
   $('#saveAddAnotherBtn').classList.remove('hidden'); // only meaningful when adding
   $('#editNav').classList.add('hidden'); // no prev/next while adding a brand-new one
@@ -3616,7 +3656,12 @@ function openEdit(id, fromDetail = false, list) {
     const field = form.elements[k];
     if (!field || field.tagName === undefined) continue;
     if (field.type === 'checkbox') field.checked = !!v;
-    else if (field.type === 'date') field.value = toDateInputValue(v); // date inputs need YYYY-MM-DD
+    else if (field.type === 'date') {
+      field.value = toDateInputValue(v); // date inputs need YYYY-MM-DD
+      // A stored day the picker can't show ("Spring 2024", "TBD") would be
+      // saved back as blank — keep the original unless the user edits the field.
+      field.dataset.raw = field.value ? '' : (v == null ? '' : String(v));
+    }
     else field.value = v == null ? '' : v;
   }
   $('#deleteBtn').classList.remove('hidden');
@@ -3853,8 +3898,14 @@ form.addEventListener('input', (e) => {
 
 // Snapshots the current form state into the API payload shape. Shared by the
 // normal submit and by Save & prev/next (editStep).
+// Touching a date field means the user has taken it over: drop the
+// unreadable original that openEdit stashed (see collectFormData).
+form.addEventListener('input', (e) => { if (e.target.type === 'date') e.target.dataset.raw = ''; });
 function collectFormData() {
   const data = Object.fromEntries(new FormData(form).entries());
+  form.querySelectorAll('input[type="date"]').forEach((el) => {
+    if (!el.value && el.dataset.raw) data[el.name] = el.dataset.raw;
+  });
   data.in_hand = form.in_hand.checked;
   data.favorite = form.favorite.checked;
   data.retired = form.retired.checked;

@@ -112,6 +112,7 @@ the app runs fully open on port 3000. Copy [`.env.example`](.env.example) to
 | `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS` | Throttle requests per IP (off by default; recommended for public instances) |
 | `FRAME_ANCESTORS` | Allow embedding the app in an `<iframe>` on your own site |
 | `SESSION_SECRET` | Override the auto-derived owner-login signing key |
+| `TZ` | Your time zone (e.g. `America/New_York`). Only affects the dates in backup and CSV export filenames, which otherwise follow the server's clock (UTC in Docker) |
 | `UPS_*` / `USPS_*` / `FEDEX_*` | Enable carrier ETA look-ups |
 
 See [`.env.example`](.env.example) for the complete, commented list.
@@ -217,6 +218,9 @@ Release Date, Tracking, ETA, Sold Date, Buyer
 and case don't matter, `$85.00`→85 and `64.60 g`→64.6 are parsed, % off is
 recomputed, brand+model-less rows are skipped, and rows with a matching `id` are
 updated (so re-importing an export won't duplicate). Photos aren't imported.
+Purchase and sold dates are stored as `YYYY-MM-DD`: `6/15/2026` is read as
+month/day, and `15/6/2026` (first number over 12) as day/month. Anything that
+isn't a recognizable date, like `Spring 2024`, is kept exactly as typed.
 
 ## REST API
 Handy if you want to script against it (subject to the access mode above):
