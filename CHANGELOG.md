@@ -3,6 +3,14 @@
 All notable changes to this project are documented here. Every commit that
 changes app behavior gets an entry — newest first.
 
+## 2026-10-05
+- **Security updates** — clears all open Dependabot alerts (`npm audit`: 0).
+  multer 2.2.0 → 2.4.0 (5 advisories; 2.3.0 was still affected), sharp 0.35.2 →
+  0.35.5, brace-expansion 2.1.4 → 2.1.7 (via archiver), and csv-parse 5.6 → 7.0.3
+  (major bump; the sync `parse()` options used by CSV import are unchanged —
+  verified with BOM, quoted fields, embedded commas/newlines and a full
+  export → re-import round trip). Existing installs need `npm install`.
+
 ## 2026-10-04
 - **Fix: restoring a large backup failed with "Request failed (413)".** A full
   backup with photos is easily over a gigabyte, and shared hosts reject a
