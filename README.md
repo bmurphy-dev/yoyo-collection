@@ -12,10 +12,15 @@ runs from a single folder.
 password `demo` to see the owner/editing view. It's read-only, so you can't break
 anything.
 
-<!-- Add screenshots here once you have them, e.g.:
-![Collection grid](docs/screenshot-grid.png)
-![Detail view](docs/screenshot-detail.png)
--->
+![The collection: monthly feature, maker filters and the Shelf view](docs/screenshot-collection.jpg)
+
+<p align="center">
+  <img src="docs/screenshot-detail.jpg" alt="A yoyo's detail sheet with photos and specs" width="44%">
+  &nbsp;
+  <img src="docs/screenshot-for-sale.jpg" alt="The For Sale page" width="52%">
+</p>
+
+<sub>Screenshots from a real collection's public view — owner-only fields like price paid and seller aren't shown to visitors.</sub>
 
 ## Features
 - **Collection** — tile grid or spreadsheet-style table; per-yoyo detail view with
