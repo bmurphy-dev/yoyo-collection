@@ -24,6 +24,9 @@ No build step — the front end is plain HTML/CSS/JS in `public/`.
 ## Guidelines
 - **Match the surrounding style.** Vanilla JS, no framework, no transpiler.
 - **Keep it dependency-light.** Open an issue before adding a new runtime dep.
+- **Run `npm test`** — it starts real servers on throwaway databases and
+  covers public-field privacy, CSV import matching, dates and the zip reader.
+  CI runs it on Node 22.13 and 24 for every PR. Add a test with your change.
 - **Test your change in the browser** before opening a PR — add a yoyo, edit it,
   upload a photo, switch views, toggle dark mode.
 - **Don't commit data.** `data/`, `uploads/`, and `.env` are git-ignored; keep it

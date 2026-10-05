@@ -1571,7 +1571,7 @@ app.post('/api/import', uploadCsv.single('file'), (req, res) => {
   const matchByIdentity = db.prepare(
     `SELECT id FROM yoyos
      WHERE lower(brand) = lower(@brand) AND lower(model) = lower(@model) AND lower(color) = lower(@color)
-       AND deleted_at IS NULL`
+       AND deleted_at IS NULL ORDER BY id`
   );
 
   // Which columns does this CSV actually provide? Updates only touch those, so a
@@ -1602,6 +1602,11 @@ app.post('/api/import', uploadCsv.single('file'), (req, res) => {
 
   let created = 0, updated = 0, skipped = 0;
 
+  // Each yoyo can be matched by only one row per import. Without this, a sheet
+  // listing two identical yoyos (same brand/model/color) wrote both rows onto
+  // the first one, and a single row with two identical candidates created a
+  // third. Rows claim the oldest unclaimed match; a row with none left is new.
+  const claimed = new Set();
   const run = db.transaction((recs) => {
     for (const rec of recs) {
       // Translate the row's headers into our internal field names first.
@@ -1631,8 +1636,9 @@ app.post('/api/import', uploadCsv.single('file'), (req, res) => {
       // No id (e.g. importing a fresh spreadsheet): match an existing yoyo by
       // brand + model + color so re-imports update instead of duplicating.
       if (!id) {
-        const matches = matchByIdentity.all({ brand: y.brand, model: y.model, color: y.color });
-        if (matches.length === 1) id = matches[0].id;
+        const open = matchByIdentity.all({ brand: y.brand, model: y.model, color: y.color })
+          .filter((m) => !claimed.has(m.id));
+        if (open.length) id = open[0].id;
       }
 
       if (id && findSql.get(id)) {
@@ -1646,11 +1652,12 @@ app.post('/api/import', uploadCsv.single('file'), (req, res) => {
           }
           updateSql.run(params);
         }
+        claimed.add(id);
         updated++;
       } else {
         y.uuid = crypto.randomUUID();
         y.rev = nextRev();
-        insertSql.run(y);
+        claimed.add(Number(insertSql.run(y).lastInsertRowid));
         created++;
       }
     }
