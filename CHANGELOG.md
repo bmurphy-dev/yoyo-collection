@@ -4,6 +4,15 @@ All notable changes to this project are documented here. Every commit that
 changes app behavior gets an entry — newest first.
 
 ## 2026-10-05
+- **Tests** — `npm test` (Node's built-in runner, no new dependencies), run in
+  CI on Node 22.13 and 24 for every push and PR. Covers owner-only fields never
+  reaching logged-out visitors, CSV import matching and round trips, date
+  normalization, and `unzip.js`.
+- **Fix: a CSV listing two identical yoyos collapsed them into one.** Both rows
+  matched the same yoyo by brand + model + color, so the second overwrote the
+  first; and one row with two identical candidates created a third copy. Each
+  yoyo can now be matched by only one row per import (oldest first), and a row
+  with no unclaimed match is added as new. Found by the new tests.
 - **Fix: linked videos were wiped by every "Publish to website"** from the
   native apps. Publishing restores from the app's database, which has no
   videos table (videos are web-only), and restore replaced everything. Now,
