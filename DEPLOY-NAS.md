@@ -161,7 +161,7 @@ free -h                                        # available RAM
 | `uname -m` | `x86_64` or `aarch64` | `armv7l` — 32-bit, the image won't run |
 | `findmnt … /var/lib/docker` | your SSD, `ext4`/`btrfs`/`zfs` | the boot device, or **no output** |
 | `lsblk` | data path on a real disk, `ROTA=0` for SSD | the path missing entirely |
-| `free -h` | 4 GB+ | under 2 GB — see the restore note in the gotchas |
+| `free -h` | 2 GB+ | under 1 GB — fine for viewing, but leave headroom for restores |
 
 **No output from `findmnt` means Docker is still on the root filesystem** — on
 an SBC, that's the microSD card. And if your data path doesn't appear under
@@ -626,9 +626,12 @@ thin layers over the same Docker. Paste the compose file into whatever
   limiter and update cache are in-process `Map`s. This must never run at two
   replicas — which also rules out Kubernetes and anything that autoscales.
 
-- **Restore is the memory-hungry endpoint.** Backup streams and is memory-safe;
-  restore buffers the whole upload (up to 200 MB) plus the parsed archive on top.
-  Fine with 4 GB+; worth knowing on a 1–2 GB entry-level unit.
+- **Restore needs disk, not memory.** Backup and restore both stream: the browser
+  uploads the backup in chunks and the server unpacks it one photo at a time, so
+  even a multi-gigabyte restore stays under ~100 MB of RAM. It does need free disk
+  for roughly twice the backup's size while it runs (the uploaded zip plus the
+  photos it unpacks) — `RESTORE_TMP_DIR` moves the scratch copy if the data disk
+  is tight.
 
 - **Thumbnails after a restore.** If photos load slowly, **Settings ⚙** has an
   optimize pass that generates any that are missing.

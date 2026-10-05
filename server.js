@@ -1838,10 +1838,15 @@ async function restoreFromZip(zipPath, res) {
   const yoyoCols = new Set(db.prepare('PRAGMA table_info(yoyos)').all().map((c) => c.name));
   const photoCols = new Set(db.prepare('PRAGMA table_info(photos)').all().map((c) => c.name));
   const videoCols = new Set(db.prepare('PRAGMA table_info(videos)').all().map((c) => c.name));
+  // Only columns this schema has are inserted, and only those are passed as
+  // parameters: a backup from a newer build can carry extra columns, and on
+  // Node builds without setAllowUnknownNamedParameters an unmatched named
+  // parameter is an error that would refuse the whole restore.
   const insertFrom = (table, cols, row) => {
     const keys = Object.keys(row).filter((k) => cols.has(k));
+    const params = Object.fromEntries(keys.map((k) => [k, row[k]]));
     db.prepare(`INSERT INTO ${table} (${keys.join(', ')}) VALUES (${keys.map((k) => `@${k}`).join(', ')})`)
-      .run(row);
+      .run(params);
   };
 
   db.transaction(() => {

@@ -4,6 +4,13 @@ All notable changes to this project are documented here. Every commit that
 changes app behavior gets an entry — newest first.
 
 ## 2026-10-05
+- **Self-hosting guides** (#5, thanks @bmurphy-dev): `DEPLOY-NAS.md`,
+  `DEPLOY-DESKTOP.md` and `REMOTE-ACCESS.md`. Their restore notes are updated
+  for the streaming, chunked restore (memory no longer scales with backup size).
+- **Fix: restoring a backup from a newer version could be refused** on Node
+  builds without `setAllowUnknownNamedParameters` — an extra column in the
+  backup became an unmatched SQL parameter. Restore now passes only the columns
+  this schema has. Reported in #7 by @bmurphy-dev.
 - **Security updates** — clears all open Dependabot alerts (`npm audit`: 0).
   multer 2.2.0 → 2.4.0 (5 advisories; 2.3.0 was still affected), sharp 0.35.2 →
   0.35.5, brace-expansion 2.1.4 → 2.1.7 (via archiver), and csv-parse 5.6 → 7.0.3

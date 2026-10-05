@@ -262,8 +262,9 @@ that point follow [DEPLOY-NAS.md](DEPLOY-NAS.md) instead.
   limiter and update cache are in-process. Don't run a native install and a
   container against the same data.
 
-- **Restore is the memory-hungry endpoint.** Backup streams; restore buffers the
-  upload (up to 200 MB) plus the parsed archive. Rarely an issue on a desktop.
+- **Restore streams too.** The backup uploads in chunks and unpacks one photo at
+  a time, so size isn't a problem — just leave free disk for about twice the
+  backup while it runs.
 
 - **`sharp` failing isn't fatal.** The app boots anyway and serves full-size
   images without thumbnails, logging a warning.
