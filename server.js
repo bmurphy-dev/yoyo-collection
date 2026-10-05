@@ -1798,7 +1798,7 @@ async function restoreFromZip(zipPath, res) {
 
   // Open the backup DB from a temp file (read-only) and copy its rows in.
   const tmp = path.join(SCRATCH_DIR, `yoyo-restore-${Date.now()}.db`);
-  let yoyoRows, photoRows, videoRows;
+  let yoyoRows, photoRows, videoRows, backupHasVideos = true;
   try {
     await extractEntry(zipPath, dbEntry, tmp);
     const src = openDatabase(tmp, { readOnly: true });
@@ -1807,7 +1807,7 @@ async function restoreFromZip(zipPath, res) {
     // A backup taken before video embeds existed has no such table; that's an
     // empty list, not a broken backup.
     try { videoRows = src.prepare('SELECT * FROM videos').all(); }
-    catch { videoRows = []; }
+    catch { videoRows = []; backupHasVideos = false; }
     src.close();
   } catch (err) {
     return res.status(400).json({ error: `Could not read backup database: ${err.message}` });
@@ -1849,11 +1849,29 @@ async function restoreFromZip(zipPath, res) {
       .run(params);
   };
 
+  // The native apps' "Publish to website" restores from a database that has no
+  // videos table at all — linked videos exist only on the web. Wiping them on
+  // every publish would make them impossible to keep, so when the backup has
+  // no videos table, the site's current videos are carried over to whichever
+  // yoyos (matched by uuid) the backup still contains. A backup that does have
+  // the table — any web backup — replaces videos exactly, as before.
+  const keptVideos = backupHasVideos ? [] : db.prepare(
+    `SELECT v.*, y.uuid AS yoyo_uuid FROM videos v JOIN yoyos y ON y.id = v.yoyo_id WHERE y.deleted_at IS NULL`
+  ).all();
+  let videosKept = 0;
+
   db.transaction(() => {
     db.prepare('DELETE FROM yoyos').run(); // cascades to photos and videos
     for (const r of yoyoRows) insertFrom('yoyos', yoyoCols, r);
     for (const p of photoRows) insertFrom('photos', photoCols, p);
     for (const v of videoRows) insertFrom('videos', videoCols, v);
+    const idByUuid = db.prepare('SELECT id FROM yoyos WHERE uuid = ? AND deleted_at IS NULL');
+    for (const { yoyo_uuid, id, ...v } of keptVideos) {
+      const target = yoyo_uuid && idByUuid.get(yoyo_uuid);
+      if (!target) continue;
+      insertFrom('videos', videoCols, { ...v, yoyo_id: target.id });
+      videosKept++;
+    }
     // Restored rows carry stale or absent revs; re-stamp every row with a fresh
     // change-feed position so sync clients re-pull the whole (replaced)
     // collection. Photo files still match by uuid, so blobs aren't re-fetched.
@@ -1866,7 +1884,7 @@ async function restoreFromZip(zipPath, res) {
   backfillUuids(db);
   backfillPhotoUuids(db);
 
-  res.json({ yoyos: yoyoRows.length, photos: photoRows.length, videos: videoRows.length, photoFiles });
+  res.json({ yoyos: yoyoRows.length, photos: photoRows.length, videos: videoRows.length + videosKept, videosKept, photoFiles });
 }
 
 // ---- Multer / error handling ----
