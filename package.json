@@ -31,7 +31,6 @@
     "node": ">=22.13 <23 || >=23.4"
   },
   "dependencies": {
-    "adm-zip": "^0.6.0",
     "archiver": "^7.0.1",
     "csv-parse": "^5.6.0",
     "csv-stringify": "^6.5.2",
