@@ -4,6 +4,13 @@ All notable changes to this project are documented here. Every commit that
 changes app behavior gets an entry — newest first.
 
 ## 2026-10-05
+- **Fix: linked videos were wiped by every "Publish to website"** from the
+  native apps. Publishing restores from the app's database, which has no
+  videos table (videos are web-only), and restore replaced everything. Now,
+  when a backup has no videos table at all, the site's existing videos are
+  kept for every yoyo the backup still contains (matched by uuid). A web
+  backup — which has the table — still restores videos exactly. The restore
+  response reports `videosKept`.
 - **Self-hosting guides** (#5, thanks @bmurphy-dev): `DEPLOY-NAS.md`,
   `DEPLOY-DESKTOP.md` and `REMOTE-ACCESS.md`. Their restore notes are updated
   for the streaming, chunked restore (memory no longer scales with backup size).
