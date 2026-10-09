@@ -1,3 +1,10 @@
+> **Implemented in [#15](https://github.com/stammig/yoyo-collection/pull/15), merged 2026-10-04. Issue #14 is closed.** Kept as the record of what was proposed. What shipped differs as follows:
+> - The convention lives in a "Dates" section of `CONTRIBUTING.md`, the header comment of the new `dates.js`, and next to `parseDay()` in `app.js`.
+> - The cleanup is `normalize-dates.mjs`, a dry run unless given `--apply`.
+> - D/M collections get no setting for now.
+> - Two more bugs were fixed: free text without a day number no longer gets an invented day, and the edit form no longer blanks a stored day it can't display.
+> - `relativeDay()`, `formatDay()` and the `precision` rule were left out because nothing calls them yet. They moved to #12 (`relativeDay()`) and #13 (`formatDay()` + `precision`). See their plans.
+
 ## The problem
 
 The app stores two kinds of time, but nothing in the code says which is which, and a few places mix them up:
