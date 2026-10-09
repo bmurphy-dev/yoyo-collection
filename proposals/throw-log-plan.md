@@ -18,7 +18,7 @@ Append the `yoyo_events` table and its two indexes from the proposal. It's a new
 This keeps the validation reviewable in one place, the way `carriers.js` stands apart.
 
 - `EVENT_TYPE_RE = /^[a-z][a-z0-9_]{0,31}$/`, the forward-compatible type check.
-- `DAY_RE` plus a real-date check for `occurred_on`. Reject days more than one day past the server's UTC date. The one day of slack covers clients up to UTC+14.
+- `occurred_on` is checked with a new `isDay(s)` exported from `dates.js`: strictly `YYYY-MM-DD` and a real date. It's built on the `isoDay()` check `dates.js` already has, rather than adding a second date parser. `normalizeDay()` can't do this job, because it hands back unparseable input unchanged, so `2026-02-30` would pass. Days more than one day past the server's UTC date are rejected. The one day of slack covers clients up to UTC+14.
 - `sanitizeEventData(obj)` mirrors `sanitizeSyncCustom`: plain object, at most 20 keys, primitive values, strings capped at 200 characters.
 - `throwUuid(yoyoUuid, day)` returns a v5 UUID over `${yoyoUuid.toLowerCase()}:throw:${day}` in a fixed namespace constant. `node:crypto` has no v5, so it's about 10 lines over `createHash('sha1')`: set the version and variant bits, then format. The namespace and name format get documented in a comment as the contract the Apple app implements.
 
@@ -35,11 +35,15 @@ The routes go after the videos section. The sync routes sit next to `/api/sync/c
 - **`GET /api/sync/events?since=&limit=`** follows the auth, cursor, limit clamp and `{ serverTime, latestRev, hasMore, events }` shape of `/api/sync/changes`, with tombstones included.
 - **`POST /api/sync/events`** takes `{ events: [...] }`, capped at 500 because rows are tiny. Each row is checked with the existing `UUID_RE` and `acceptTimestamp()` and the `events.js` validators, then resolved last-writer-wins exactly like `/api/sync/push`: `updatedAt <= existing.updated_at` returns `server-newer`. Two throw-specific checks: a throw's `uuid` must equal `throwUuid(yoyo_uuid, occurred_on)`, otherwise `bad-id`, which keeps convergence enforced rather than hoped for. An unknown `yoyo_uuid` returns `unknown-yoyo`, so a client pushes yoyos before their events. Results are `[{ uuid, applied, rev | reason }]`, the same format push uses.
 - **Gates need no changes:** the write gate already returns a 401 for `/api/sync/*`. `isPublish()` matches `/api/sync/` by prefix, so a read-only mirror still receives events from its master device, while the web toggle on a mirror stays blocked.
-- **`restoreFromZip`:** read `yoyo_events` from the backup, treating a missing table as an empty list the way `videos` does. Inside the existing transaction, run `DELETE FROM yoyo_events`, insert the backup's rows through `insertFrom`, and re-stamp their revs after the yoyos, so sync clients re-pull. Add `events` to the response counts.
+- **`restoreFromZip`:** read `yoyo_events` from the backup.
+  - **When the table is there:** inside the existing transaction, run `DELETE FROM yoyo_events`, insert the backup's rows through `insertFrom`, and re-stamp their revs after the yoyos, so sync clients re-pull.
+  - **When it isn't:** this covers a backup from before events existed, and a native app's "Publish to website", which restores from a database with no web-only tables. Leave the site's events untouched, following the rule #19 set for linked videos, so a publish from the app doesn't erase the throw log.
+  - **Reattaching:** events are keyed by `yoyo_uuid`, so they reattach to the restored yoyos with no remapping. Events whose yoyo isn't in the backup are ignored, because every read joins on a live yoyo.
+  - **Response:** add `events` to the response counts.
 
 ### 4. `public/app.js`
 
-- **`localDay()`** returns `YYYY-MM-DD` built from `getFullYear/getMonth/getDate`, never `toISOString()`, which is UTC. (The existing `sold_date` default uses `toISOString()` and so has the same off-by-one after about 7pm in US time zones. I'd leave that alone here and mention it separately.)
+- **Dates:** every day in this plan comes from `localDay()`, `parseDay()` and `daysFromToday()`, which #15 added. This PR adds **`relativeDay(day)`**, built on `daysFromToday()`, which returns "today", "yesterday", "3 days ago", or "in 2 days". The detail view's "Last thrown…" line is its first user, and #13's timeline and lent badge reuse it. `relativeETA()` stays as it is.
 - **`loadAll()`:** when `isOwnerState` is true, fetch `/api/events?type=throw&from=<one year ago>` and `/api/events/summary?type=throw` alongside `/api/yoyos`, keeping the same `loadGen` staleness guard. Build a `throwDays` map from `yoyo_uuid` to a set of days (for charts, the calendar, and streaks) and a `throwSummary` map (for all-time rankings). Public viewers skip both requests entirely.
 - **"Used today":** a new `hero-act` button next to Favorite / In hand / Retired (only when `canEditState`), plus an entry in the card's "more" menu. It flips the local map optimistically, POSTs, and rolls back with a toast on error. It needs no `loadAll()` round trip.
 - **Past days:** the sparkline's day cells and the throw calendar's days are buttons for the owner. Tapping one toggles that `occurred_on` through the same optimistic path. Future days are disabled.
@@ -63,20 +67,27 @@ The on-state for the new hero button and the sparkline sizing. Both reuse existi
 
 ### 7. Testing
 
-The repo has no test suite, so this is a manual checklist that goes in the PR description:
+**Automated:** the server side goes in `test/events.test.js`, using the suite's `startServer()` helper, so it runs in CI:
 
-- Two browsers toggle the same yoyo on the same day, and one row results.
+- Toggling the same yoyo on the same day twice from two sessions results in one row.
 - Toggling off and on again flips `deleted_at` on that same row.
-- `curl` a sync push with a stale `updated_at` and get `server-newer`.
-- Push a throw with a random uuid and get `bad-id`.
-- Push for an unknown yoyo and get `unknown-yoyo`.
+- A sync push with a stale `updated_at` gets `server-newer`.
+- A throw pushed with a random uuid gets `bad-id`.
+- A push for an unknown yoyo gets `unknown-yoyo`.
 - Read-only mode blocks the web toggle, but a logged-in `/api/sync/events` push still lands.
 - Demo mode blocks both.
 - A public viewer gets a 403 on `GET /api/events`.
-- Round-trip a backup containing events, and restore a backup from before events existed. The second leaves an empty table and doesn't fail.
+- `occurred_on` rejects `2026-02-30`, `6/15/2026`, and a day two days ahead.
+- `ensure` on four yoyos creates four rows. Running it again changes nothing.
+- A backup containing events round-trips. Restoring a backup with no events table, from before events or from the app, leaves the site's events as they were.
+
+`throwUuid()` also gets a fixed-value case in `test/units.test.js`. That value is the contract the Apple app implements, so a change to it fails the build rather than splitting the two clients' ids.
+
+**Manual:** the rest is client-side, so it stays a checklist in the PR description:
+
 - Set the browser time zone to UTC−7 and log at 10pm local time. It lands on today.
 - Tap yesterday on the sparkline, and a row for yesterday appears. Future days can't be tapped.
-- Bulk "Used today" on four yoyos creates four rows. Running it again changes nothing, because `ensure` never un-ticks.
+- Bulk "Used today" on four yoyos shows the "Updated 4 yoyos" toast and leaves select mode.
 - Rankings with seeded data: a yoyo thrown on 16 of the last 30 days is EDC. One thrown on 10 days last spring and not in the last 100 days is Collecting dust. An in-hand yoyo bought 6 months ago with no throws is Shelf queen, and so is one thrown on 2 days this year, but not one thrown on 3 (that's Collecting dust if none were recent). One bought last week isn't a Shelf queen. No yoyo ever shows as both.
 - With throws seeded across six years: Most thrown offers 2y, 3y, and 5y but hides 10y. Each span's ranking matches a hand count. Long-term trends shows six yearly bars, and switching to months within a span shows the right monthly totals. The calendar browses back to the first month with throws.
 - The streak counts correctly across a month boundary, and resets after a day with no throws.
@@ -87,6 +98,12 @@ The repo has no test suite, so this is a manual checklist that goes in the PR de
 The contract is four things: the `yoyo_events` row shape, the two sync routes, the v5 namespace plus the `"<yoyo_uuid>:throw:<YYYY-MM-DD>"` name format for throw ids, and "push yoyos before their events." Everything else in the app is optional. An app that never calls `/api/sync/events` keeps working unchanged.
 
 ---
+
+**Edit 4:** brought in line with main after #15–#19:
+- Dates come from #15's helpers, and this PR adds `relativeDay()`.
+- `occurred_on` is validated by a new `isDay()` in `dates.js`.
+- Restore keeps the site's events when a backup has no events table, matching #19.
+- The server checks are automated tests in `test/events.test.js` now that the repo has a suite.
 
 **Edit 3:** long-term analytics: `summary` gains `from`, a new `histogram` endpoint, the `idx_events_day` index, `to` on `GET /api/events`, 2y/3y/5y/10y/All in Most thrown, a Long-term trends card, per-yoyo year by year, and the calendar browsing past a year. The rankings keep their 30/90/365-day snapshots.
 

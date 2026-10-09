@@ -38,11 +38,13 @@ Stored as `yoyo_events.type`, with optional structured details in `data` and fre
 
 These use random v4 ids, since several can happen on the same day. Because sync stores unknown types as-is, the Apple app or a later PR can add a type without a server change first.
 
-**A contest is more than "thrown today," and it also counts as a throw.** The same goes for a `milestone`. Each gets its own type rather than a flag in the day's throw row. Throw rows are a per-day on/off with a derived id, so a mistaken un-tick of "used today" would destroy the contest details with it, and a derived id allows only one row per day, which rules out entering 1A and 3A at the same event. Logging a contest or milestone also creates that day's throw. That's idempotent, because the throw's id is derived, so Most thrown, Gathering dust, and "throw-days since last clean" count competition days without special cases. Deleting the contest later leaves the throw, which is still true. `contest` is distinct from `history`: `contest` is *you* competing, and `history` is what happened before you owned it.
+**A contest is more than "thrown today," and it also counts as a throw.** The same goes for a `milestone`. Each gets its own type rather than a flag in the day's throw row. Throw rows are a per-day on/off with a derived id, so a mistaken un-tick of "used today" would destroy the contest details with it, and a derived id allows only one row per day, which rules out entering 1A and 3A at the same event. Logging a contest or milestone also creates that day's throw. That's idempotent, because the throw's id is derived, so Most thrown, Collecting dust, and "throw-days since last clean" count competition days without special cases. Deleting the contest later leaves the throw, which is still true. `contest` is distinct from `history`: `contest` is *you* competing, and `history` is what happened before you owned it.
 
 **Lube isn't a clean.** Players re-lube far more often than they fully clean. If lube-only days logged as `clean`, the "Due for a clean" reminder would reset too early. The reminder resets on `clean` or `bearing` (a new bearing is a clean one) and ignores `lube`.
 
 **Where is it? Worked out, not stored.** A "Lent to Sam since Aug 3" badge comes from the latest `lent` with no later `returned`. There's no status field to keep in sync, and a `returned` logged from any device clears it everywhere.
+
+**Approximate dates.** Provenance is often only known to the year ("ran at 2019 Worlds"). An event like that stores `occurred_on` as the first day of the period (`2019-01-01`), with `data.precision` set to `"year"` or `"month"`, and displays as "2019" or "Mar 2019". It stays sortable and validated instead of falling back to free text. Any type can use it, and a missing `precision` means an exact day. This is the rule #14 proposed, which #15 left for this PR because nothing used it yet.
 
 **`autograph`, not `signed`.** `signature` is already a yoyo field meaning a signature *model* (a player or maker collab), so an autograph event gets a name that can't be confused with it.
 
@@ -81,8 +83,13 @@ In Insights, a **Competition record** card listing contests, placements, and the
 
 ---
 
+**Edit 3:** brought in line with main:
+- Approximate dates (`data.precision`, shown through a new `formatDay()`) move here from #14, since `history` events are their first user.
+- The date helpers come from #15.
+- "Gathering dust" is renamed to #12's "Collecting dust".
+
 **Edit:** added the `contest` type, and the reasoning for why a contest is its own type that also counts as a throw.
 
 **Edit 2:** added `lube`, `damage`, `milestone`, `autograph`, and `lent`/`returned`, plus the reasoning for each and an explicit "no photo or video types" note.
 
-**Related:** #14 proposes the date convention both event proposals rely on. It also normalizes `purchase_date`/`sold_date`, which this timeline's "Bought from…" and "Sold to…" entries need in order to sort correctly. Its table shows how #14, #12, and this issue fit together as three PRs.
+**Related:** the date convention from #14 landed in #15. That includes normalized `purchase_date` and `sold_date`, which this timeline's "Bought from…" and "Sold to…" entries need in order to sort correctly.

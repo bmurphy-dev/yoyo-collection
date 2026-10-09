@@ -44,7 +44,7 @@ CREATE INDEX IF NOT EXISTS idx_events_day  ON yoyo_events(type, occurred_on); --
 - **Local date from the client:** the server clock would file a 10pm throw under tomorrow for anyone west of UTC.
 - **Deleted yoyos:** events stay (they're history) but are excluded from stats, the same way `WHERE deleted_at IS NULL` works today.
 - **Access:** owner-only, reads included. POSTs already fall under the write gate, so read-only mode and demo mode block logging with no exemption needed. That's correct for mirrors, since the next publish replaces their database.
-- **Backup/restore:** backups need no change, because the zip carries the whole database file. Restore does need a change: `restoreFromZip` copies tables row by row, and events have no foreign key to cascade through. *(Corrected; see the implementation plan in the comments.)*
+- **Backup/restore:** backups need no change, because the zip carries the whole database file. Restore does need a change: `restoreFromZip` copies tables row by row, and events have no foreign key to cascade through. A backup with no `yoyo_events` table, such as one from before this feature or a native app's "Publish to website", leaves the site's events as they are. That's the same rule #19 applies to linked videos. *(Corrected; see the implementation plan in the comments.)*
 
 **Endpoints (all new, type-agnostic):**
 
@@ -102,11 +102,13 @@ Happy to build it on whatever shape you land on, or to hold off if it's better t
 
 ---
 
+**Edit 4:** brought in line with main. Dates use the `localDay()`, `parseDay()` and `daysFromToday()` helpers from #15, and this PR adds `relativeDay()` on top of them, as you suggested on #14. A restore whose backup has no events table now keeps the site's events, matching #19's rule for linked videos.
+
 **Edit 3:** long-term analytics reach back 2, 3, 5, and 10 years and all time (Most thrown periods, a Long-term trends card, and the calendar navigating past a year), backed by server-side aggregates. The rankings keep their 30-day, 90-day, and 1-year snapshots.
 
 **Edit 2:** Shelf queen now allows up to 2 throw-days a year, and Collecting dust starts at 3+, so the two never overlap.
 
 **Edit:** added past-day logging, the multi-select "Used today," definitions for the EDC, Collecting dust, and Shelf queen rankings, streaks, the throw calendar, and a Yoyo of the day that favors neglected yoyos.
 
-**Related:** #14 proposes the date convention this relies on (`occurred_on` as a local calendar day, via a shared `localDay()` helper) and fixes existing date bugs. Its table shows how #14, this issue, and #13 fit together as three PRs.
+**Related:** the date convention from #14 landed in #15. `occurred_on` is a local calendar day under that convention, produced by its `localDay()` helper.
 

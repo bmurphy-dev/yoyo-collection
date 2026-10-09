@@ -1,8 +1,8 @@
 ## Implementation plan (assuming the shared `yoyo_events` table)
 
-This assumes #12's table lands first, or in the same release. [Its plan](https://github.com/stammig/yoyo-collection/issues/12#issuecomment-5896362756) covers the schema, `events.js`, the sync routes, and the restore fix. **If this PR lands first**, it carries those pieces unchanged except for the throw toggle, and #12 shrinks to the throw type and its UI.
+This assumes #12's table lands first, or in the same release. [Its plan](https://github.com/stammig/yoyo-collection/issues/12#issuecomment-5896362756) covers the schema, `events.js`, the sync routes, and the restore fix. **If this PR lands first**, it carries those pieces (plus #12's `relativeDay()`) unchanged except for the throw toggle, and #12 shrinks to the throw type and its UI.
 
-One correction carried over from #12: the proposal said backup/restore needed nothing. It does, because restore copies tables row by row and events have no foreign key to cascade through. The fix lives in #12's step 3.
+One correction carried over from #12: the proposal said backup/restore needed nothing. It does, because restore copies tables row by row and events have no foreign key to cascade through. The fix lives in #12's step 3, including keeping the site's events when a backup has no events table, which matches #19's rule for linked videos.
 
 ### 1. Server: `server.js` and `events.js`
 
@@ -14,11 +14,13 @@ This PR adds no schema change and no new sync code. The types are just values in
 - **`PUT /api/events/:uuid`** edits `occurred_on`, `note`, `data`, and `type`. Changing a row to or from `throw` is rejected, because throw ids are derived from the date, so a throw can't be retyped or redated in place.
 - **`DELETE /api/events/:uuid`** tombstones the row (`deleted_at`, `updated_at`, `rev`) rather than removing it, so the delete syncs.
 - **Validation stays generic:** the server checks the type pattern and the shape of `data`, not a per-type field list. Types the Apple app adds later are stored as-is and shown generically on the web.
+- **Approximate dates:** the one cross-field check. When `data.precision` is present, it must be `"year"` or `"month"`, and `occurred_on` must be the first day of that year or month. That keeps approximate events sorting where they belong. `occurred_on` itself goes through #12's `isDay()` from `dates.js`, like every other event.
 - **`GET /api/events`** already takes a comma list of types from #12. The "due for a clean" card uses `type=throw,clean`.
 - **The reminder threshold setting:** add `clean_after_throw_days` to `PUBLIC_SETTINGS`, since `PUT /api/settings/:key` only accepts keys on that list. It uses the existing key/value table, with an empty value meaning off and 30 as the suggested default. `GET /api/settings` would expose the number publicly, which is harmless.
 
 ### 2. `public/app.js`
 
+- **Dates:** a new **`formatDay(day, precision)`** shows "2019", "Mar 2019", or the locale's short date. Every timeline entry renders through it. The log form gets an Exact day / Month / Year choice that sets `precision` and snaps the date to the start of the period. Relative wording uses #12's `relativeDay()`, and everything else uses the `localDay()` and `parseDay()` helpers that #15 added.
 - **`EVENT_TYPES` metadata:** one client-side map per type holding its label, an existing `SVG` icon, and its optional fields. For example, `bearing` has fields `bearing` and `size`, `string` has field `string`, `contest` has fields `contest`, `division`, `round`, and `placement` (number), `lube` has field `lube`, `damage` has field `severity` (a select: cosmetic / functional), `milestone` has field `trick`, `autograph` has fields `by` and `where`, `lent` has field `to`, and `returned` has none. Unknown types fall back to "Other · <type>".
 - **The timeline:** add a `timelineHTML(y, events)` section to `detailHTML`, after the videos section. It loads lazily from `openDetail()` via `GET /api/yoyos/:id/events`, and only for owners. It merges three sources, newest first:
   - maintenance and history events, each with an icon, label, date, the `data` values, and the note
@@ -48,23 +50,36 @@ Timeline rows (icon rail, date, body), the log form, and the collapsed throw sum
 - **Public service history on For Sale listings** (question 2). Everything stays owner-only until you weigh in. If it's wanted, a follow-up could add a per-yoyo opt-in and render the timeline on the public listing, minus the notes.
 - **CSV export of events.** The yoyo CSV stays one row per yoyo.
 
-### 6. Testing (manual checklist for the PR description)
+### 6. Testing
+
+**Automated:** the server side extends `test/events.test.js` from #12, so it runs in CI:
 
 - Log, edit, and delete each type. A delete leaves a tombstone that shows up in `/api/sync/events`.
-- Log two maintenance events on the same day and get two rows. Retyping a row to `throw` is rejected.
-- Log a `lube` after a `clean`, and the "throw-days since last clean" count keeps running. Log a `bearing`, and it resets.
-- Log `lent` to Sam, and the badge and "Lent out" filter show it. Log `returned`, and the badge clears. A `lent` and `returned` on the same day resolve by `created_at`.
-- Log a milestone, and that day's throw exists, the same as for a contest.
-- Log a contest, and that day's throw exists. Log a second contest on the same yoyo and day (another division), and you get two contest rows but still one throw. Delete a contest and its throw remains. Logging a contest on a day whose throw was un-ticked revives it.
-- Push a contest alone through `/api/sync/events`, and no throw is created server-side.
-- Contest names autocomplete from earlier entries, and the Competition record card lists each contest with the right yoyo.
-- Pull a `type` the web doesn't know through sync, and check it renders as "Other".
-- The timeline shows the seller/buyer entries from the yoyo fields, and editing `seller` changes them without touching any events.
-- With some throws and a clean logged, the "throw-days since last clean" count is correct. With the threshold set, the Insights card lists the right yoyos, and clearing the setting hides it.
+- Two maintenance events on the same day give two rows. Retyping a row to or from `throw` is rejected.
+- A milestone or contest ensures that day's throw. A second contest on the same yoyo and day (another division) gives two contest rows but still one throw. Deleting a contest keeps its throw. A contest on a day whose throw was un-ticked revives it.
+- A contest pushed alone through `/api/sync/events` creates no throw server-side.
+- A `type` the web doesn't know is stored as-is through sync.
+- `precision: "year"` is accepted on `2019-01-01` and rejected on `2019-03-01`. An unknown `precision` value is rejected.
 - Read-only mode, demo mode, and public viewers get the same results as the throw log.
 - A backup round-trip keeps every event.
 
+**Manual:** the client side stays a checklist in the PR description:
+
+- Log a `lube` after a `clean`, and the "throw-days since last clean" count keeps running. Log a `bearing`, and it resets.
+- Log `lent` to Sam, and the badge and "Lent out" filter show it. Log `returned`, and the badge clears. A `lent` and `returned` on the same day resolve by `created_at`.
+- Contest names autocomplete from earlier entries, and the Competition record card lists each contest with the right yoyo.
+- An unknown type renders as "Other".
+- A year-precision `history` event shows as "2019" and sorts before one from March 2019.
+- The timeline shows the seller/buyer entries from the yoyo fields, and editing `seller` changes them without touching any events.
+- With some throws and a clean logged, the "throw-days since last clean" count is correct. With the threshold set, the Insights card lists the right yoyos, and clearing the setting hides it.
+
 ---
+
+**Edit 3:** brought in line with main:
+- `formatDay()` and the `precision` rule, which #15 left for this PR.
+- `occurred_on` is validated by `dates.js`.
+- Restore keeps the site's events when a backup has no events table, matching #19.
+- The server checks are automated tests now that the repo has a suite.
 
 **Edit 2:** added `lube`, `damage`, `milestone`, `autograph`, and `lent`/`returned`: `THROW_IMPLYING` for milestones, the `lentTo()` badge and filter, and the reminder resetting on `clean`/`bearing` but not `lube`, with tests.
 
