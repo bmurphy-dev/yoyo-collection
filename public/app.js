@@ -17,7 +17,7 @@ let yoyos = [];
 let filters = {
   q: '', sort: 'brand', sortDir: 'asc',
   brands: [], compositions: [], conditions: [],
-  material: '', status: '', retiredOnly: false, listed: false, favOnly: false,
+  material: '', status: '', retiredOnly: false, listed: false, favOnly: false, lentOut: false,
   paidMin: null, paidMax: null, retailMin: null, retailMax: null, weightMin: null, weightMax: null,
 };
 let editingId = null;
@@ -270,9 +270,13 @@ let loadGen = 0; // guards against out-of-order responses: only the latest in-fl
 // Fetches the full collection and re-renders whichever view is current.
 async function loadAll() {
   const gen = ++loadGen;
-  const data = await api('/api/yoyos');
+  // The owner's event log (throws, loans, cleans — see events.js) loads with
+  // the collection so every view renders from one consistent snapshot.
+  const [data, events] = await Promise.all([api('/api/yoyos'), loadEventData()]);
   if (gen !== loadGen) return; // a newer loadAll() has since started — this one is stale, drop it
   yoyos = data;
+  applyEventData(events);
+  loanReminder(); // once a day: a loaned yoyo is due back or overdue
   refreshDatalists();
   refreshCurrentView();
 }
@@ -446,6 +450,7 @@ function filteredYoyos() {
   if (filters.retiredOnly) list = list.filter((y) => y.retired);
   if (filters.listed) list = list.filter((y) => isForSale(y.sale_status));
   if (filters.favOnly) list = list.filter((y) => y.favorite);
+  if (filters.lentOut) list = list.filter((y) => lentTo(y));
   const inRange = (val, min, max) =>
     (min == null || (val != null && val >= min)) && (max == null || (val != null && val <= max));
   if (filters.paidMin != null || filters.paidMax != null) list = list.filter((y) => inRange(y.paid, filters.paidMin, filters.paidMax));
@@ -481,7 +486,7 @@ function setSort(key) {
 // ---- Master render ----
 function filtersActive() {
   return !!(filters.q || filters.brands.length || filters.compositions.length || filters.conditions.length ||
-    filters.material || filters.status || filters.retiredOnly || filters.listed || filters.favOnly ||
+    filters.material || filters.status || filters.retiredOnly || filters.listed || filters.favOnly || filters.lentOut ||
     filters.paidMin != null || filters.paidMax != null || filters.retailMin != null || filters.retailMax != null ||
     filters.weightMin != null || filters.weightMax != null);
 }
@@ -495,6 +500,7 @@ function activeFilterCount() {
   if (filters.retiredOnly) n++;
   if (filters.listed) n++;
   if (filters.favOnly) n++;
+  if (filters.lentOut) n++;
   if (filters.paidMin != null || filters.paidMax != null) n++;
   if (filters.retailMin != null || filters.retailMax != null) n++;
   if (filters.weightMin != null || filters.weightMax != null) n++;
@@ -682,6 +688,9 @@ function shelfSub(y) {
   if (isOwnerState && !y.in_hand) return { cls: 'state', text: 'on order' };
   if (isForSale(y.sale_status)) return { cls: 'state', text: y.sale_status };
   if (y.sale_status === 'Sold') return { cls: 'muted', text: 'sold' };
+  // A loan or a throw-log ranking (owner-only; see events.js) outranks the colorway.
+  const ev = shelfEventText(y);
+  if (ev) return { cls: 'state', text: ev };
   return { cls: 'muted', text: y.color || '' };
 }
 function shelfGroupHTML(maker, items, featured) {
@@ -789,6 +798,8 @@ function tileHTML(y) {
   if (y.retired) tags.unshift('<span class="tag tag-retired clickable" data-filt="retiredOnly:1" title="Show retired">Retired</span>');
   if (isForSale(y.sale_status)) tags.unshift(`<span class="tag tag-sale">${esc(y.sale_status)}</span>`);
   else if (y.sale_status === 'Sold') tags.unshift('<span class="tag tag-sold">Sold</span>');
+  const evTags = eventTagsHTML(y);
+  if (evTags) tags.push(evTags);
   const brandHTML = y.brand
     ? `<div class="card-brand clickable" data-filt="brands:${esc(y.brand)}" title="Filter by ${esc(y.brand)}">${esc(y.brand)}</div>`
     : '<div class="card-brand">—</div>';
@@ -1302,6 +1313,7 @@ function showCardMenu(e, id) {
     `<button data-act="fav">${y.favorite ? SVG.starOutline : SVG.star}<span>${y.favorite ? 'Unfavorite' : 'Favorite'}</span></button>` +
     `<button data-act="inhand">${SVG.box}<span>${y.in_hand ? 'Mark on order' : 'Mark in hand'}</span></button>` +
     `<button data-act="retired">${SVG.check}<span>${y.retired ? 'Unmark retired' : 'Mark retired'}</span></button>` +
+    `<button data-act="thrown">${EV_SVG.yoyo}<span>${isThrown(y) ? 'Not used today' : 'Used today'}</span></button>` +
     `<button data-act="edit">${SVG.edit}<span>Edit…</span></button>` +
     `<button data-act="colorway">${SVG.copyPlus}<span>New colorway…</span></button>` +
     `<div class="cm-sep"></div>` +
@@ -1316,6 +1328,7 @@ function showCardMenu(e, id) {
   menu.querySelector('[data-act="fav"]').onclick = () => { dismissCardMenu(); toggleFavorite(id); };
   menu.querySelector('[data-act="inhand"]').onclick = () => quick({ in_hand: !y.in_hand });
   menu.querySelector('[data-act="retired"]').onclick = () => quick({ retired: !y.retired });
+  menu.querySelector('[data-act="thrown"]').onclick = () => { dismissCardMenu(); setThrown(id); };
   menu.querySelector('[data-act="edit"]').onclick = () => { dismissCardMenu(); openEdit(id); };
   menu.querySelector('[data-act="colorway"]').onclick = () => { dismissCardMenu(); openColorway(id); };
   menu.querySelector('[data-act="del"]').onclick = () => { dismissCardMenu(); deleteYoyoQuick(id); };
@@ -1416,12 +1429,14 @@ function renderSelectionBar() {
     `<button class="btn btn-ghost btn-sm" data-act="all">Select all</button>` +
     `<button class="btn btn-ghost btn-sm" data-act="none" ${n ? '' : 'disabled'}>Clear</button>` +
     `<span class="spacer"></span>` +
+    `<button class="btn btn-ghost btn-sm" data-act="thrown" ${n ? '' : 'disabled'} title="Mark every selected yoyo as thrown today">Used today</button>` +
     `<button class="btn btn-primary btn-sm" data-act="edit" ${n ? '' : 'disabled'}>Edit fields…</button>` +
     `<button class="btn btn-ghost btn-sm" data-act="dup" ${n ? '' : 'disabled'}>Duplicate</button>` +
     `<button class="btn btn-danger btn-sm" data-act="del" ${n ? '' : 'disabled'}>Delete</button>` +
     `<button class="btn btn-ghost btn-sm" data-act="done">Done</button>`;
   bar.querySelector('[data-act="all"]').onclick = () => { filteredYoyos().forEach((y) => selectedIds.add(y.id)); render(); renderSelectionBar(); };
   bar.querySelector('[data-act="none"]').onclick = () => { selectedIds.clear(); render(); renderSelectionBar(); };
+  bar.querySelector('[data-act="thrown"]').onclick = bulkUsedToday;
   bar.querySelector('[data-act="edit"]').onclick = openBulkEdit;
   bar.querySelector('[data-act="dup"]').onclick = bulkDuplicate;
   bar.querySelector('[data-act="del"]').onclick = bulkDelete;
@@ -2161,8 +2176,11 @@ function saleCardHTML(y) {
 }
 // Fetches the site-wide settings (currently just the For Sale shipping notes).
 async function loadSettings() {
-  try { const s = await api('/api/settings'); saleNotes = s.sale_notes || ''; }
-  catch { saleNotes = ''; }
+  try {
+    const s = await api('/api/settings');
+    saleNotes = s.sale_notes || '';
+    cleanAfterDays = parseInt(s.clean_after_throw_days, 10) || 0; // "Due for a clean" threshold (events.js)
+  } catch { saleNotes = ''; }
 }
 // Notes block: an editable textarea for the owner (not in demo), read-only text
 // for visitors. Only renders for visitors when there's something to show.
@@ -2993,7 +3011,8 @@ function avgSpec(list, key) {
 }
 
 function yotdHTML(list) {
-  const y = yoyoOfTheDay(list);
+  // For the owner the pick leans toward neglected yoyos (see yotdPool).
+  const y = yoyoOfTheDay(yotdPool(list));
   if (!y) return '';
   const p = y.photos && y.photos[0];
   const media = p
@@ -3076,10 +3095,12 @@ function renderInsights() {
   if (admin) { const y = maxBy(owned.filter((x) => (x.percent_off || 0) > 0), 'percent_off'); if (y) standouts.push({ icon: SVG.tag, label: 'Best deal', y, value: `${y.percent_off}% off` }); }
   { const y = maxBy(owned, 'weight_g'); if (y) standouts.push({ icon: SVG.scale, label: 'Heaviest', y, value: `${trimNum(y.weight_g)} g` }); }
   { const y = minBy(owned, 'weight_g'); if (y) standouts.push({ icon: SVG.feather, label: 'Lightest', y, value: `${trimNum(y.weight_g)} g` }); }
+  // From the throw log: most thrown, and the current streak (which has no yoyo).
+  standouts.push(...throwStandouts(owned));
   const standoutsHTML = standouts.length ? insightCard('Standouts',
     `<div class="standouts">${standouts.map((s) =>
-      `<div class="standout-row" data-arr="${s.y.id}"><span class="standout-icon">${s.icon}</span>${thumbHTML(s.y, 'standout-thumb')}` +
-      `<div class="standout-main"><div class="standout-label">${esc(s.label)}</div><div class="standout-name">${esc(s.y.brand)} ${esc(s.y.model)}</div></div>` +
+      `<div class="standout-row${s.y ? '' : ' static'}"${s.y ? ` data-arr="${s.y.id}"` : ''}><span class="standout-icon">${s.icon}</span>${s.y ? thumbHTML(s.y, 'standout-thumb') : ''}` +
+      `<div class="standout-main"><div class="standout-label">${esc(s.label)}</div><div class="standout-name">${s.y ? `${esc(s.y.brand)} ${esc(s.y.model)}` : esc(s.name)}</div></div>` +
       `<span class="standout-value">${esc(s.value)}</span></div>`).join('')}</div>`) : '';
 
   const brandRows = tallyTop(owned.filter((y) => y.brand), 'brand', 8).map((t) => ({ name: t.name, value: t.count, display: String(t.count) }));
@@ -3103,8 +3124,9 @@ function renderInsights() {
   const chartGrid = (compCard || priceCard) ? `<div class="chart-grid">${compCard}${priceCard}</div>` : '';
 
   const note = !admin ? `<div class="insight-note">${SVG.lock}<span>Log in to see value, savings, and spending insights.</span></div>` : '';
-  wrap.innerHTML = `${yotdHTML(owned)}<div class="metric-dials">${metrics}</div>${note}${avgSpecsHTML(owned)}${standoutsHTML}${chartGrid}${brandChart}${spendChart}`;
+  wrap.innerHTML = `${yotdHTML(owned)}<div class="metric-dials">${metrics}</div>${note}${avgSpecsHTML(owned)}${standoutsHTML}${throwInsightsHTML(owned)}${chartGrid}${brandChart}${spendChart}`;
   wrap.querySelectorAll('[data-arr]').forEach((el) => el.addEventListener('click', () => openDetail(Number(el.dataset.arr))));
+  wireThrowInsights(wrap);
 }
 
 // ---- Detail (read-only) modal ----
@@ -3138,6 +3160,7 @@ function openDetail(id, list) {
     img.addEventListener('click', () => openLightbox(img.dataset.full))
   );
   wireVideoCards($('#detailBody'));
+  wireDetailEvents(y); // throw panel, "Used today" / "Log event", and the timeline (events.js)
   // Quick actions in the hero (owner only)
   $('#detailBody').querySelectorAll('[data-da]').forEach((b) => b.addEventListener('click', () => {
     const act = b.dataset.da;
@@ -3167,7 +3190,7 @@ function detailHTML(y) {
   const chipHTML = chips.join('');
   const statusBadge = isOwnerState
     ? `<span class="status-badge ${y.in_hand ? 'in' : 'order'}">${y.in_hand ? 'In hand' : 'On order'}</span>` : '';
-  const retiredBadge = y.retired ? '<span class="status-badge retired">Retired</span>' : '';
+  const retiredBadge = (y.retired ? '<span class="status-badge retired">Retired</span>' : '') + detailEventBadgesHTML(y);
 
   let priceRow = '';
   if (isOwnerState && (y.paid != null || y.retail != null || y.market_value != null)) {
@@ -3184,6 +3207,7 @@ function detailHTML(y) {
       <button class="hero-act ${y.favorite ? 'on' : ''}" data-da="favorite">${y.favorite ? SVG.star : SVG.starOutline}<span>${y.favorite ? 'Favorited' : 'Favorite'}</span></button>
       <button class="hero-act ${y.in_hand ? 'on' : ''}" data-da="in_hand">${SVG.box}<span>${y.in_hand ? 'In hand' : 'Mark in hand'}</span></button>
       <button class="hero-act ${y.retired ? 'on' : ''}" data-da="retired">${SVG.check}<span>${y.retired ? 'Retired' : 'Mark retired'}</span></button>
+      ${detailEventActionsHTML(y)}
       <button class="hero-act" data-da="edit">${SVG.edit}<span>Edit</span></button>
     </div>` : '';
 
@@ -3223,8 +3247,8 @@ function detailHTML(y) {
     ? `<section class="detail-group full"><h3>Description</h3><p class="detail-desc">${esc(y.description)}</p></section>`
     : '';
 
-  return hero + gallery + `<div class="detail-grid">${groups}${customGroup}</div>` + desc
-    + videosSectionHTML(y.videos);
+  return hero + throwPanelHTML(y) + gallery + `<div class="detail-grid">${groups}${customGroup}</div>` + desc
+    + videosSectionHTML(y.videos) + timelineSectionHTML();
 }
 
 // Open a yoyo from a /y/:id share link: a focused, read-only single-yoyo view
@@ -3241,6 +3265,7 @@ function openShareView(id) {
 function closeDetail() {
   $('#detailModal').classList.add('hidden');
   detailId = null;
+  resetDetailEvents();
   if (shareMode) {
     // Closing a shared view drops the /y/:id path and reveals the full collection.
     shareMode = false;
@@ -4314,7 +4339,7 @@ wireSaleControlsOnce();
 function clearAllFilters() {
   filters.q = '';
   filters.brands = []; filters.compositions = []; filters.conditions = [];
-  filters.material = ''; filters.status = ''; filters.retiredOnly = false; filters.listed = false; filters.favOnly = false;
+  filters.material = ''; filters.status = ''; filters.retiredOnly = false; filters.listed = false; filters.favOnly = false; filters.lentOut = false;
   filters.paidMin = filters.paidMax = filters.retailMin = filters.retailMax = filters.weightMin = filters.weightMax = null;
   $('#search').value = '';
   view.page = 1;
@@ -4361,6 +4386,7 @@ function buildFilterPanel() {
     `<div class="filter-section filter-toggles">
        <label class="filter-check"><input type="checkbox" id="fRetired" ${filters.retiredOnly ? 'checked' : ''}><span>Retired only</span></label>
        <label class="filter-check"><input type="checkbox" id="fFav" ${filters.favOnly ? 'checked' : ''}><span>Favorites only</span></label>
+       ${money$ ? `<label class="filter-check"><input type="checkbox" id="fLent" ${filters.lentOut ? 'checked' : ''}><span>Lent out</span></label>` : ''}
      </div>` +
     (money$ ? `<div class="filter-section"><div class="filter-label">Paid ($)</div>
        <div class="filter-range"><input type="number" id="fPaidMin" placeholder="min" value="${filters.paidMin ?? ''}"><span>–</span><input type="number" id="fPaidMax" placeholder="max" value="${filters.paidMax ?? ''}"></div></div>` : '') +
@@ -4398,6 +4424,7 @@ function buildFilterPanel() {
   }));
   const fRet = panel.querySelector('#fRetired'); if (fRet) fRet.addEventListener('change', () => { filters.retiredOnly = fRet.checked; view.page = 1; render(); });
   const fFav = panel.querySelector('#fFav'); if (fFav) fFav.addEventListener('change', () => { filters.favOnly = fFav.checked; view.page = 1; render(); });
+  const fLent = panel.querySelector('#fLent'); if (fLent) fLent.addEventListener('change', () => { filters.lentOut = fLent.checked; view.page = 1; render(); });
 }
 
 // Updates the numeric badge on the filter toggle button.
@@ -4425,6 +4452,7 @@ function renderActiveFilters() {
   if (filters.retiredOnly) add('Retired', () => { filters.retiredOnly = false; });
   if (filters.listed) add('Listed', () => { filters.listed = false; });
   if (filters.favOnly) add('Favorites', () => { filters.favOnly = false; });
+  if (filters.lentOut) add('Lent out', () => { filters.lentOut = false; });
   const rangeLabel = (name, min, max, fmt = (v) => v) =>
     min != null && max != null ? `${name} ${fmt(min)}–${fmt(max)}` : min != null ? `${name} ≥ ${fmt(min)}` : `${name} ≤ ${fmt(max)}`;
   if (filters.paidMin != null || filters.paidMax != null) add(rangeLabel('Paid', filters.paidMin, filters.paidMax, (v) => '$' + v), () => { filters.paidMin = filters.paidMax = null; });

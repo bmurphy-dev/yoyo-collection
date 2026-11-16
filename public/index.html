@@ -498,6 +498,19 @@
           </div>
         </section>
 
+        <section class="form-section" id="cleanReminderAdmin">
+          <header class="fs-head"><span class="fs-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a6.5 6.5 0 0 0 6.5-6.5c0-1.9-.9-3.6-2.8-5.1S12.5 5.7 12 3.5c-.5 2.2-1.9 4.4-3.7 5.9S5.5 12.6 5.5 14.5A6.5 6.5 0 0 0 12 21z"/></svg></span>
+            <div><h3>Cleaning reminder</h3><p>Flag yoyos that are due for a bearing clean</p></div>
+          </header>
+          <p class="hint">Insights lists a yoyo as due once it has been thrown on this many days since its last logged clean or bearing swap. Leave it blank to turn the reminder off.</p>
+          <div class="settings-toolbar">
+            <span id="cleanAfterStatus" class="hint"></span>
+            <label class="inline-label" for="cleanAfterInput">Throw-days</label>
+            <input type="number" id="cleanAfterInput" class="clean-after-input" min="1" max="999" step="1" placeholder="e.g. 30" />
+            <button type="button" id="cleanAfterSave" class="btn btn-primary">Save</button>
+          </div>
+        </section>
+
         <section class="form-section" id="bandwidthAdmin">
           <header class="fs-head"><span class="fs-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13"/><path d="M7 11l5 5 5-5"/><path d="M5 21h14"/></svg></span>
             <div><h3>Photos &amp; bandwidth</h3><p>Generate thumbnails to cut data use</p></div>
@@ -585,6 +598,7 @@
   <!-- Toast notifications -->
   <div id="toastWrap" class="toast-wrap" aria-live="polite"></div>
 
+  <script src="/events.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
