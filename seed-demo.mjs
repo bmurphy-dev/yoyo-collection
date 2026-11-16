@@ -9,6 +9,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
+import { throwUuid } from './events.js';
 
 const DB_PATH = process.env.SEED_DB_PATH || process.env.DB_PATH || 'data/demo.db';
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -84,19 +86,62 @@ if (existing > 0 && !process.env.FORCE) {
 
 const COLS = ['brand','model','color','body_material','composition','in_hand','condition','retail','paid',
   'weight_g','diameter_mm','width_mm','gap_mm','bearing_size','response_type','description','release_date',
-  'tracking','eta','favorite','retired','sale_status','sale_price'];
+  'tracking','eta','favorite','retired','sale_status','sale_price','purchase_date','seller','uuid'];
 const insert = db.prepare(
   `INSERT INTO yoyos (${COLS.join(', ')}) VALUES (${COLS.map((c) => '@' + c).join(', ')})`
 );
 
 db.exec('BEGIN');
-db.exec('DELETE FROM photos; DELETE FROM yoyos;');
+db.exec('DELETE FROM photos; DELETE FROM yoyos; DELETE FROM yoyo_events;');
 db.exec(`DELETE FROM sqlite_sequence WHERE name IN ('yoyos','photos')`);
 for (const y of YOYOS) {
   const row = {};
   for (const c of COLS) row[c] = y[c] ?? (['in_hand','favorite','retired'].includes(c) ? 0 : (['retail','paid','weight_g','diameter_mm','width_mm','gap_mm','sale_price'].includes(c) ? null : ''));
+  // Every yoyo gets its uuid here (the app would backfill one on boot) because
+  // the event log below is keyed by it. Bought a while ago, so the usage
+  // rankings — which skip recent arrivals — have something to say.
+  row.uuid = y.uuid = crypto.randomUUID();
+  if (y.in_hand) { row.purchase_date = day(-400); row.seller = row.seller || 'YoYoExpert'; }
   insert.run(row);
 }
+
+// ---- Event log: about 60 days of throws plus a little history, so the demo's
+// Insights cards, rankings and detail timelines aren't empty. The demo refuses
+// writes, so this is display-only. Dates are relative to the day it's seeded.
+function day(offset) {
+  const d = new Date(); d.setDate(d.getDate() + offset);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+const byModel = Object.fromEntries(YOYOS.map((y) => [y.model, y.uuid]));
+const addEvent = db.prepare(
+  `INSERT OR IGNORE INTO yoyo_events (uuid, yoyo_uuid, type, occurred_on, note, data) VALUES (?, ?, ?, ?, ?, ?)`
+);
+const thrown = (model, offset) => addEvent.run(throwUuid(byModel[model], day(offset)), byModel[model], 'throw', day(offset), '', '{}');
+const logged = (model, type, on, data = {}, note = '') =>
+  addEvent.run(crypto.randomUUID(), byModel[model], type, on, note, JSON.stringify(data));
+
+for (let i = 0; i < 60; i++) {
+  if (i % 7 !== 3) thrown('Peak 2', -i);                 // the everyday carry
+  if (i % 3 === 0) thrown('Council', -i);                // regular rotation
+  if (i % 9 === 0) thrown('Akita 2025', -i);
+  if (i % 11 === 5) thrown('Zen', -i);
+}
+for (const o of [-130, -134, -139, -150, -161, -170]) thrown('Shutter', o);   // collecting dust: a thrower gone quiet
+thrown('Forma', -200);                                                         // shelf queen: out once this year
+for (const o of [-420, -455, -500, -560, -700, -760, -800]) thrown('Peak 2', o); // older history, for the long-term views
+// 'Ekta' and 'Herdsman - AL7' are never thrown: shelf queens.
+
+logged('Peak 2', 'clean', day(-25), { lube: 'YYF thin' });
+logged('Peak 2', 'pads', day(-90), { response: 'CLYW Snow Tire' }, 'Old pads were slipping on binds.');
+logged('Peak 2', 'contest', day(-48), { contest: 'State Contest', division: '1A', round: 'Finals', placement: 3 });
+thrown('Peak 2', -48); // a contest counts as a throw
+logged('Peak 2', 'history', `${new Date().getFullYear() - 9}-01-01`, { precision: 'year', from: 'previous owner' }, 'First-run colorway, bought from the original owner.');
+logged('Council', 'bearing', day(-70), { bearing: 'NSK Platinum', size: 'C' });
+logged('Council', 'milestone', day(-12), { trick: 'Kwijibo' });
+thrown('Council', -12);
+logged('Shutter', 'damage', day(-150), { severity: 'cosmetic' }, 'Small ding on the rim from a concrete landing.');
+logged('Zen', 'lent', day(-20), { to: 'Sam', due: day(-3) }); // overdue, to show the warning
+db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('clean_after_throw_days', '20');
 // Example shipping/sale note for the For Sale page.
 db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
   .run('sale_notes', 'Ships from the US · buyer pays shipping · PayPal G&S · DM to arrange a sale or trade.');

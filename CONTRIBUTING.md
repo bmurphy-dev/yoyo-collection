@@ -17,9 +17,11 @@ No build step — the front end is plain HTML/CSS/JS in `public/`.
 - `db.js` — SQLite (Node's built-in `node:sqlite`) wrapper + schema bootstrap
 - `carriers.js` — UPS / USPS / FedEx tracking lookups
 - `dates.js` — calendar-day normalization (see "Dates" below)
+- `events.js` — validation and id rules for the event log (throws, maintenance)
 - `unzip.js` — streaming zip reader used by Restore and the 360° spin `.zip` upload
 - `schema.sql` — database schema
-- `public/` — the front end (`index.html`, `app.js`, `styles.css`)
+- `public/` — the front end (`index.html`, `app.js`, `styles.css`; `events.js`
+  holds the event log's UI and loads before `app.js`)
 
 ## Guidelines
 - **Match the surrounding style.** Vanilla JS, no framework, no transpiler.
@@ -41,7 +43,8 @@ No build step — the front end is plain HTML/CSS/JS in `public/`.
 
 ## Dates
 The app stores two kinds of time, and mixing them up causes off-by-one bugs:
-- **Calendar days** (`purchase_date`, `sold_date`, `eta`) have no time zone.
+- **Calendar days** (`purchase_date`, `sold_date`, `eta`, and an event's
+  `occurred_on`) have no time zone.
   Store them as `YYYY-MM-DD` in the user's local calendar. In the browser use
   `localDay()` / `parseDay()` from `app.js`; never take a day from
   `new Date().toISOString()`, which is the UTC date and is tomorrow for
