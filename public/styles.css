@@ -1693,3 +1693,96 @@ body:not(.owner) #settingsBtn { display: none; } /* owner-only settings; must st
 .sale-actions { display: flex; gap: 8px; margin-top: 12px; }
 .sale-actions .btn { flex: 1 1 auto; white-space: nowrap; }
 .btn-sm { padding: 6px 12px; font-size: 13.5px; }
+
+/* ============================================================
+   Event log — throw log + maintenance / contest timeline (events.js)
+   Owner-only. Built from the existing tokens, so both design
+   languages and dark mode theme it without extra rules.
+   ============================================================ */
+body.read-only #cleanReminderAdmin { display: none !important; }
+.settings-toolbar { align-items: center; gap: 8px; flex-wrap: wrap; }
+.clean-after-input { width: 96px; }
+
+/* Tags and badges */
+.tag-lent, .status-badge.lent { background: color-mix(in srgb, var(--gold) 20%, transparent); color: var(--gold-deep); font-weight: 600; }
+.tag-lent.soon, .status-badge.lent.soon { background: color-mix(in srgb, var(--gold) 36%, transparent); }
+.tag-lent.overdue, .status-badge.lent.overdue { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
+.standout-value.overdue, .overdue-n { color: var(--danger); }
+.standout-value.soon { color: var(--gold-deep); }
+.overdue-n { font-weight: 600; margin-left: 6px; }
+.tag-rank-edc, .status-badge.rank-edc { background: var(--accent-soft); color: var(--accent-deep); font-weight: 600; }
+.tag-rank-queen, .status-badge.rank-queen, .status-badge.rank-dust { background: var(--surface-3); color: var(--muted); font-weight: 600; }
+
+/* Detail sheet: throw summary under the hero */
+.throw-panel { margin: 14px 0 6px; padding: 14px 16px; background: var(--surface-2); border: 1px solid var(--separator); border-radius: var(--radius); display: grid; gap: 10px; }
+.throw-facts { font-size: 0.86rem; color: var(--muted); line-height: 1.5; }
+.throw-facts strong { color: var(--text); font-weight: 600; }
+.throw-weeks-wrap { display: grid; gap: 8px; }
+.throw-weeks { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 14px); grid-auto-columns: 14px; gap: 4px; justify-content: start; }
+.tw-day { width: 14px; height: 14px; padding: 0; border: none; border-radius: 4px; background: var(--surface-3); display: block; }
+button.tw-day { cursor: pointer; transition: transform 0.08s ease, background 0.08s ease; }
+button.tw-day:hover { transform: scale(1.25); background: var(--accent-mid); }
+.tw-day.on, button.tw-day.on:hover { background: var(--accent); }
+.tw-day.today { outline: 2px solid var(--border-strong); outline-offset: 1px; }
+.tw-day.future { background: transparent; }
+.throw-weeks-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.throw-weeks-foot .btn { display: inline-flex; align-items: center; gap: 6px; }
+.throw-weeks-foot .btn svg { width: 14px; height: 14px; }
+.throw-years { font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.throw-years strong { color: var(--text); font-weight: 600; }
+.throw-panel .throw-cal { margin: 0; box-shadow: none; max-width: 380px; padding: 14px; }
+
+/* Month grids that mark thrown days (detail sheet + Insights) */
+.throw-cal .cal-day { height: 38px; }
+.throw-cal .cal-day:disabled { opacity: 0.35; cursor: default; background: transparent; }
+.throw-cal .cal-nav:disabled { opacity: 0.3; cursor: default; background: transparent; }
+.throw-cal .cal-day.thrown { color: var(--accent-deep); font-weight: 600; }
+.throw-cal .cal-day.lvl1 { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.throw-cal .cal-day.lvl2 { background: color-mix(in srgb, var(--accent) 34%, transparent); }
+.throw-cal .cal-day.lvl3 { background: color-mix(in srgb, var(--accent) 56%, transparent); }
+.throw-cal .cal-day.selected { background: var(--accent); color: var(--on-accent); }
+.throw-cal-layout { display: grid; grid-template-columns: minmax(260px, 380px) 1fr; gap: 24px; align-items: start; }
+.throw-cal-day { font-size: 0.86rem; font-weight: 600; margin: 2px 0 8px; }
+
+/* Insights cards */
+.insight-card .card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.insight-card .card-head h3 { margin-bottom: 0; margin-right: auto; }
+.seg-wrap { flex-wrap: wrap; }
+.rank-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 18px; margin-bottom: 18px; }
+.rank-grid .insight-card { margin-bottom: 0; }
+.rank-n { font-weight: 500; color: var(--faint); margin-left: 4px; }
+.rank-blurb { margin: -8px 0 12px; }
+.rank-more { margin-top: 8px; }
+.standout-row.static { cursor: default; }
+.standout-row.static:hover { background: transparent; }
+
+/* Timeline */
+.timeline h3 { margin-bottom: 10px; }
+.tl { list-style: none; margin: 0; padding: 0; display: grid; }
+.tl-row { display: flex; align-items: flex-start; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--separator); }
+.tl-row:last-child { border-bottom: none; }
+.tl-icon { width: 28px; height: 28px; border-radius: 8px; background: var(--surface-3); color: var(--muted); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.tl-icon svg { width: 15px; height: 15px; }
+.tl-body { flex: 1; min-width: 0; }
+.tl-title { font-size: 0.88rem; font-weight: 550; }
+.tl-detail { font-size: 0.82rem; color: var(--muted); margin-top: 1px; }
+.tl-note { font-size: 0.84rem; color: var(--text); margin-top: 3px; white-space: pre-wrap; line-height: 1.5; }
+.tl-date { font-size: 0.8rem; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; padding-top: 2px; }
+.tl-acts { display: inline-flex; flex: none; opacity: 0.55; }
+.tl-row:hover .tl-acts, .tl-acts:focus-within { opacity: 1; }
+.tl-acts .icon-btn svg { width: 14px; height: 14px; }
+.tl-feature .tl-icon { background: var(--gold-soft); color: var(--gold-deep); }
+.tl-feature .tl-title { font-weight: 650; }
+.tl-throws .tl-title { font-weight: 450; color: var(--muted); }
+.tl-throws .tl-icon { background: transparent; }
+
+/* Log event form */
+.event-form { display: grid; gap: 13px; }
+.event-form .form-grid:empty { display: none; }
+.event-form > .hint { margin: 0; }
+.event-form > .hint:empty { display: none; }
+
+@media (max-width: 760px) {
+  .throw-cal-layout { grid-template-columns: 1fr; }
+  .throw-weeks { grid-template-rows: repeat(7, 13px); grid-auto-columns: minmax(13px, 1fr); }
+}
