@@ -17,7 +17,8 @@ import { stringify } from 'csv-stringify/sync';
 import { parse } from 'csv-parse/sync';
 import archiver from 'archiver';
 import { track as trackPackage, configuredCarriers } from './carriers.js';
-import { DAY_FIELDS, normalizeDay, localDayStamp } from './dates.js';
+import { DAY_FIELDS, normalizeDay, localDayStamp, isDay } from './dates.js';
+import { EVENT_TYPE_RE, THROW_IMPLYING, NOTE_MAX, throwUuid, eventDayError, sanitizeEventData, precisionError } from './events.js';
 import { canonicalCondition, canonicalComposition } from './vocab.js';
 import { listEntries, extractEntry } from './unzip.js';
 import db, { DB_PATH, openDatabase, backfillUuids, backfillPhotoUuids, nextRev } from './db.js';
@@ -1338,6 +1339,217 @@ app.delete('/api/videos/:videoId', (req, res) => {
   res.json({ ok: true });
 });
 
+// ---- API: events (throw log + maintenance / contest / provenance log) ----
+// Dated events on a yoyo, all in yoyo_events (see schema.sql). Everything here
+// is owner-only, reads included: the log is private history, like what you paid.
+//
+// yoyo_events.yoyo_uuid is always stored LOWERCASE, whatever case the yoyo's
+// own uuid is in (the Apple apps write uppercase, the web and Android
+// lowercase, and a publish can change a yoyo's spelling). Reads therefore join
+// on lower(yoyos.uuid), and a yoyo's log survives its uuid changing case.
+const eventKey = (yoyoUuid) => String(yoyoUuid).toLowerCase();
+
+// Events deliberately never call touchYoyo(). Photos and videos ride the
+// parent through sync, so they must look like an edit to it; events have
+// their own feed, and bumping the yoyo's updated_at on every "used today" tap
+// would let that tap beat a real edit made on another device.
+
+const EVENT_COLS = 'uuid, yoyo_uuid, type, occurred_on, note, data, deleted_at, created_at, updated_at, rev';
+function eventOut(r) {
+  let data = {};
+  try { data = JSON.parse(r.data || '{}'); } catch { /* ignore bad JSON */ }
+  return { ...r, data };
+}
+
+// Parses ?type=a,b into a validated list ([] = every type), or null if any
+// entry isn't a well-formed type.
+function eventTypesParam(raw) {
+  const types = String(raw || '').split(',').map((t) => t.trim()).filter(Boolean);
+  return types.every((t) => EVENT_TYPE_RE.test(t)) ? types : null;
+}
+
+// Builds the shared WHERE for the collection-wide reads: live events on live
+// yoyos, narrowed by type list and an inclusive day range. Returns null when
+// a parameter is malformed (after sending the 400).
+function eventFilter(req, res, { defaultType } = {}) {
+  if (!isOwner(req)) { res.status(403).json({ error: 'Log in to see the event log.' }); return null; }
+  const types = eventTypesParam(req.query.type ?? defaultType);
+  if (!types) { res.status(400).json({ error: 'Bad event type.' }); return null; }
+  const where = ['e.deleted_at IS NULL'];
+  const params = [];
+  if (types.length) { where.push(`e.type IN (${types.map(() => '?').join(', ')})`); params.push(...types); }
+  for (const [key, op] of [['from', '>='], ['to', '<=']]) {
+    const day = req.query[key];
+    if (day === undefined || day === '') continue;
+    if (!isDay(day)) { res.status(400).json({ error: `${key} must be YYYY-MM-DD.` }); return null; }
+    where.push(`e.occurred_on ${op} ?`); params.push(day);
+  }
+  return {
+    from: 'FROM yoyo_events e JOIN yoyos y ON lower(y.uuid) = e.yoyo_uuid AND y.deleted_at IS NULL',
+    where, params,
+  };
+}
+
+// Collection-wide read. Compact by default — { uuid, yoyo_uuid, type,
+// occurred_on } — because a year of throws is thousands of rows and the
+// client only needs the days; ?full=1 adds note, data and timestamps for the
+// rare types (contests, loans) whose details are shown.
+app.get('/api/events', (req, res) => {
+  const f = eventFilter(req, res);
+  if (!f) return;
+  const cols = req.query.full ? EVENT_COLS.split(', ').map((c) => `e.${c}`).join(', ') : 'e.uuid, e.yoyo_uuid, e.type, e.occurred_on';
+  const rows = db.prepare(`SELECT ${cols} ${f.from} WHERE ${f.where.join(' AND ')} ORDER BY e.occurred_on, e.created_at`).all(...f.params);
+  res.json(req.query.full ? rows.map(eventOut) : rows);
+});
+
+// One row per yoyo: first and last day, and how many distinct days. Serves
+// the spans longer than the client keeps raw rows for ("most thrown in 5
+// years"), so its size is bounded by the collection, not by the log's age.
+app.get('/api/events/summary', (req, res) => {
+  const f = eventFilter(req, res, { defaultType: 'throw' });
+  if (!f) return;
+  res.json(db.prepare(
+    `SELECT e.yoyo_uuid, MIN(e.occurred_on) AS first_on, MAX(e.occurred_on) AS last_on, COUNT(DISTINCT e.occurred_on) AS days
+     ${f.from} WHERE ${f.where.join(' AND ')} GROUP BY e.yoyo_uuid`
+  ).all(...f.params));
+});
+
+// Totals per year or month: `days` is yoyo-days (two yoyos on one day = 2),
+// `yoyos` how many different yoyos. Collection-wide unless yoyo_uuid is given.
+app.get('/api/events/histogram', (req, res) => {
+  const f = eventFilter(req, res, { defaultType: 'throw' });
+  if (!f) return;
+  const len = req.query.bucket === 'month' ? 7 : 4; // "YYYY-MM" or "YYYY"
+  if (req.query.yoyo_uuid) { f.where.push('e.yoyo_uuid = ?'); f.params.push(eventKey(req.query.yoyo_uuid)); }
+  res.json(db.prepare(
+    `SELECT substr(e.occurred_on, 1, ${len}) AS bucket,
+            COUNT(DISTINCT e.yoyo_uuid || ':' || e.occurred_on) AS days,
+            COUNT(DISTINCT e.yoyo_uuid) AS yoyos
+     ${f.from} WHERE ${f.where.join(' AND ')} GROUP BY bucket ORDER BY bucket`
+  ).all(...f.params));
+});
+
+// A yoyo's whole log, newest first.
+app.get('/api/yoyos/:id/events', (req, res) => {
+  if (!isOwner(req)) return res.status(403).json({ error: 'Log in to see the event log.' });
+  const yoyo = db.prepare('SELECT uuid FROM yoyos WHERE id = ? AND deleted_at IS NULL').get(req.params.id);
+  if (!yoyo) return res.status(404).json({ error: 'Not found' });
+  const types = eventTypesParam(req.query.type);
+  if (!types) return res.status(400).json({ error: 'Bad event type.' });
+  const typeSql = types.length ? ` AND type IN (${types.map(() => '?').join(', ')})` : '';
+  res.json(db.prepare(
+    `SELECT ${EVENT_COLS} FROM yoyo_events WHERE yoyo_uuid = ? AND deleted_at IS NULL${typeSql}
+     ORDER BY occurred_on DESC, created_at DESC`
+  ).all(eventKey(yoyo.uuid), ...types).map(eventOut));
+});
+
+// Sets (or, with `on` undefined, flips) whether a yoyo was thrown on a day.
+// The row's id is derived, so this is always an upsert of the same row:
+// insert, tombstone, or revive. Call inside a transaction. Returns
+// { uuid, live }.
+function setThrow(yoyoUuid, day, on) {
+  yoyoUuid = eventKey(yoyoUuid);
+  const uuid = throwUuid(yoyoUuid, day);
+  const row = db.prepare('SELECT deleted_at FROM yoyo_events WHERE uuid = ?').get(uuid);
+  const isLive = !!row && !row.deleted_at;
+  const live = on === undefined ? !isLive : on;
+  if (live === isLive) return { uuid, live };
+  const now = nowSql();
+  if (!row) {
+    db.prepare(`INSERT INTO yoyo_events (uuid, yoyo_uuid, type, occurred_on, created_at, updated_at, rev)
+      VALUES (?, ?, 'throw', ?, ?, ?, ?)`).run(uuid, yoyoUuid, day, now, now, nextRev());
+  } else {
+    db.prepare('UPDATE yoyo_events SET deleted_at = ?, updated_at = ?, rev = ? WHERE uuid = ?')
+      .run(live ? null : now, now, nextRev(), uuid);
+  }
+  return { uuid, live };
+}
+
+// Validates the user-editable parts of a non-throw event. Returns
+// { error } or { note, data }.
+function eventBody(body, day) {
+  const data = sanitizeEventData(body?.data);
+  const bad = precisionError(data, day);
+  if (bad) return { error: bad };
+  return { note: String(body?.note ?? '').trim().slice(0, NOTE_MAX), data };
+}
+
+// Log an event. Body: { type, occurred_on, note?, data?, ensure? }.
+//   type "throw" — toggles that day on/off and returns { uuid, live }.
+//     occurred_on may be any past day (people forget to log). { ensure: true }
+//     only ever turns the day ON, so repeating a bulk "used today" can't
+//     un-tick anything.
+//   any other type — adds an event and returns it. A contest or milestone
+//     also ensures that day's throw.
+app.post('/api/yoyos/:id/events', (req, res) => {
+  const yoyo = db.prepare('SELECT uuid FROM yoyos WHERE id = ? AND deleted_at IS NULL').get(req.params.id);
+  if (!yoyo) return res.status(404).json({ error: 'Not found' });
+  const type = String(req.body?.type || '');
+  if (!EVENT_TYPE_RE.test(type)) return res.status(400).json({ error: 'Bad event type.' });
+  const day = req.body?.occurred_on;
+  const dayErr = eventDayError(day);
+  if (dayErr) return res.status(400).json({ error: dayErr });
+
+  if (type === 'throw') {
+    return res.json(db.transaction(() => setThrow(yoyo.uuid, day, req.body?.ensure ? true : undefined))());
+  }
+  const b = eventBody(req.body, day);
+  if (b.error) return res.status(400).json({ error: b.error });
+  const uuid = crypto.randomUUID();
+  db.transaction(() => {
+    const now = nowSql();
+    db.prepare(`INSERT INTO yoyo_events (uuid, yoyo_uuid, type, occurred_on, note, data, created_at, updated_at, rev)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(uuid, eventKey(yoyo.uuid), type, day, b.note, JSON.stringify(b.data), now, now, nextRev());
+    if (THROW_IMPLYING.has(type)) setThrow(yoyo.uuid, day, true);
+  })();
+  res.status(201).json(eventOut(db.prepare(`SELECT ${EVENT_COLS} FROM yoyo_events WHERE uuid = ?`).get(uuid)));
+});
+
+// Edit an event: any of { type, occurred_on, note, data }; what's omitted is
+// kept. A throw can't be edited, and nothing can become one — its id is
+// derived from its day, so "moving" it means un-ticking one day and ticking
+// another.
+app.put('/api/events/:uuid', (req, res) => {
+  const uuid = String(req.params.uuid).toLowerCase();
+  const ev = db.prepare('SELECT * FROM yoyo_events WHERE uuid = ? AND deleted_at IS NULL').get(uuid);
+  if (!ev) return res.status(404).json({ error: 'Not found' });
+  const type = req.body?.type === undefined ? ev.type : String(req.body.type);
+  if (!EVENT_TYPE_RE.test(type)) return res.status(400).json({ error: 'Bad event type.' });
+  if (ev.type === 'throw' || type === 'throw') {
+    return res.status(400).json({ error: 'A throw can’t be edited — un-tick that day and tick another instead.' });
+  }
+  const day = req.body?.occurred_on === undefined ? ev.occurred_on : req.body.occurred_on;
+  const dayErr = eventDayError(day);
+  if (dayErr) return res.status(400).json({ error: dayErr });
+  const b = eventBody({
+    note: req.body?.note === undefined ? ev.note : req.body.note,
+    data: req.body?.data === undefined ? eventOut(ev).data : req.body.data,
+  }, day);
+  if (b.error) return res.status(400).json({ error: b.error });
+  db.transaction(() => {
+    db.prepare('UPDATE yoyo_events SET type = ?, occurred_on = ?, note = ?, data = ?, updated_at = ?, rev = ? WHERE uuid = ?')
+      .run(type, day, b.note, JSON.stringify(b.data), nowSql(), nextRev(), uuid);
+    // Re-dating a contest ensures the new day's throw; the old day's stays —
+    // nothing says the yoyo wasn't thrown then.
+    if (THROW_IMPLYING.has(type)) setThrow(ev.yoyo_uuid, day, true);
+  })();
+  res.json(eventOut(db.prepare(`SELECT ${EVENT_COLS} FROM yoyo_events WHERE uuid = ?`).get(uuid)));
+});
+
+// Deleting leaves a tombstone so the delete reaches other devices. Deleting a
+// contest keeps the throw it implied.
+app.delete('/api/events/:uuid', (req, res) => {
+  const uuid = String(req.params.uuid).toLowerCase();
+  const ev = db.prepare('SELECT uuid FROM yoyo_events WHERE uuid = ? AND deleted_at IS NULL').get(uuid);
+  if (!ev) return res.status(404).json({ error: 'Not found' });
+  db.transaction(() => {
+    const now = nowSql();
+    db.prepare('UPDATE yoyo_events SET deleted_at = ?, updated_at = ?, rev = ? WHERE uuid = ?').run(now, now, nextRev(), uuid);
+  })();
+  res.json({ ok: true });
+});
+
 // ---- API: sync (native apps) ----
 // Hub-and-spoke sync: apps pull rows changed since a rev cursor (tombstones
 // included), push batched uuid-keyed upserts resolved by last-writer-wins on
@@ -1586,6 +1798,91 @@ app.post('/api/sync/push', (req, res) => {
   res.json({ serverTime: nowSql(), latestRev: currentRev(), results });
 });
 
+// ---- Sync: events ----
+// Events get their own feed and push instead of riding the yoyo payloads, so
+// a client that never calls these is unaffected. Same cursor, clamps and
+// conflict rule as the yoyo routes above; revs come from the same counter, so
+// a client keeps one cursor per feed.
+
+app.get('/api/sync/events', (req, res) => {
+  if (!isLoggedIn(req)) return res.status(401).json({ error: 'Please sign in to sync.' });
+  const since = Math.max(0, Number(req.query.since) || 0);
+  const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
+  const rows = db.prepare(`SELECT ${EVENT_COLS} FROM yoyo_events WHERE rev > ? ORDER BY rev LIMIT ?`).all(since, limit);
+  res.json({
+    serverTime: nowSql(),
+    latestRev: currentRev(),
+    hasMore: rows.length === limit,
+    events: rows.map(eventOut), // tombstones included
+  });
+});
+
+// Body: { events: [{ uuid, yoyo_uuid, type, occurred_on, note, data,
+// created_at, updated_at, deleted_at }] }. uuid and yoyo_uuid may be sent in
+// either case; both come back lowercase. Each row is resolved on its own,
+// last-writer-wins on updated_at, and nothing is ever deleted by being left
+// out of a push. Rows are stored exactly as sent: no throw is derived from a
+// pushed contest (a client pushes both rows), so what one device pushed is
+// what every other device pulls. Push a yoyo before its events.
+app.post('/api/sync/events', (req, res) => {
+  const incoming = Array.isArray(req.body?.events) ? req.body.events : null;
+  if (!incoming) return res.status(400).json({ error: 'Body must be { events: [...] }.' });
+  if (incoming.length > 500) return res.status(400).json({ error: 'Batch too large (max 500 events).' });
+
+  const now = nowSql();
+  const results = [];
+  const yoyoByUuid = db.prepare('SELECT uuid FROM yoyos WHERE lower(uuid) = lower(?)');
+
+  db.transaction(() => {
+    for (const rec of incoming) {
+      const sent = String(rec?.uuid || '');
+      const refuse = (reason) => results.push({ uuid: sent, applied: false, reason });
+      if (!UUID_RE.test(sent)) { refuse('bad-uuid'); continue; }
+      const uuid = sent.toLowerCase();
+      const updatedAt = acceptTimestamp(rec.updated_at, now);
+      const deletedAt = rec.deleted_at == null ? null : acceptTimestamp(rec.deleted_at, now);
+      if (!updatedAt || (rec.deleted_at != null && !deletedAt)) { refuse('bad-timestamp'); continue; }
+      const type = String(rec.type || '');
+      if (!EVENT_TYPE_RE.test(type)) { refuse('bad-type'); continue; }
+      const day = rec.occurred_on;
+      if (eventDayError(day)) { refuse('bad-day'); continue; }
+      // Match the yoyo whatever case the device spells uuids in. A tombstoned
+      // yoyo still counts: its events are history.
+      const yu = String(rec.yoyo_uuid || '');
+      if (!UUID_RE.test(yu) || !yoyoByUuid.get(yu)) { refuse('unknown-yoyo'); continue; }
+      const yoyoUuid = eventKey(yu);
+      // Convergence is enforced, not hoped for: a throw must carry the id
+      // derived from its yoyo and day (see events.js).
+      if (type === 'throw' && uuid !== throwUuid(yoyoUuid, day)) { refuse('bad-id'); continue; }
+      const data = sanitizeEventData(rec.data);
+      if (precisionError(data, day)) { refuse('bad-precision'); continue; }
+      const note = String(rec.note ?? '').trim().slice(0, NOTE_MAX);
+
+      const existing = db.prepare('SELECT yoyo_uuid, type, updated_at FROM yoyo_events WHERE uuid = ?').get(uuid);
+      if (existing) {
+        // An event belongs to one yoyo for life, and a throw stays a throw.
+        if (existing.yoyo_uuid !== yoyoUuid || (existing.type === 'throw') !== (type === 'throw')) { refuse('bad-id'); continue; }
+        // Strictly newer applies; ties go to the server, as in /api/sync/push.
+        if (updatedAt <= existing.updated_at) { refuse('server-newer'); continue; }
+        const rev = nextRev();
+        db.prepare('UPDATE yoyo_events SET type = ?, occurred_on = ?, note = ?, data = ?, deleted_at = ?, updated_at = ?, rev = ? WHERE uuid = ?')
+          .run(type, day, note, JSON.stringify(data), deletedAt, updatedAt, rev, uuid);
+        results.push({ uuid: sent, applied: true, rev });
+      } else {
+        // Tombstones insert too, so other devices learn about the delete.
+        const rev = nextRev();
+        db.prepare(`INSERT INTO yoyo_events (uuid, yoyo_uuid, type, occurred_on, note, data, deleted_at, created_at, updated_at, rev)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(uuid, yoyoUuid, type, day, note, JSON.stringify(data), deletedAt,
+            acceptTimestamp(rec.created_at, now) || now, updatedAt, rev);
+        results.push({ uuid: sent, applied: true, rev });
+      }
+    }
+  })();
+
+  res.json({ serverTime: nowSql(), latestRev: currentRev(), results });
+});
+
 // Receives the bytes for one photo the client was told is missing. The row
 // (created by push) maps uuid -> filename; the parent gets a rev-only bump so
 // other devices re-pull and fetch the now-present file — no updated_at bump,
@@ -1730,7 +2027,8 @@ app.get('/api/check-update', async (req, res) => {
 
 // ---- API: site settings (key/value; e.g. For Sale shipping notes) ----
 // Only these keys are readable/writable through the API.
-const PUBLIC_SETTINGS = ['sale_notes', 'read_only'];
+// clean_after_throw_days: the "Due for a clean" reminder threshold ('' = off).
+const PUBLIC_SETTINGS = ['sale_notes', 'read_only', 'clean_after_throw_days'];
 app.get('/api/settings', (_req, res) => {
   const out = {};
   for (const k of PUBLIC_SETTINGS) {
@@ -2215,6 +2513,37 @@ app.delete('/api/restore/uploads/:id', (req, res) => {
   res.status(204).end();
 });
 
+// ---- Restore: the event log ----
+// The event log follows the rule linked videos do. A backup that HAS a
+// yoyo_events table replaces the log exactly. One that doesn't — taken before
+// the log existed, or a native app's "Publish to website" — leaves the site's
+// log alone, so publishing from the app can't erase it.
+
+// The backup's events, or null when it has no such table.
+function readBackupEvents(src) {
+  try { return src.prepare('SELECT * FROM yoyo_events').all(); }
+  catch { return null; }
+}
+// Call inside the restore transaction, after the yoyos are in. Events are
+// keyed by yoyo uuid with no foreign key, so deleting the yoyos didn't touch
+// them, and kept events reattach to the restored yoyos by uuid; any whose
+// yoyo is gone simply stop showing (every read joins a live yoyo). Replaced
+// events are re-stamped after the yoyos so sync clients re-pull them.
+function restoreEvents(rows, insertFrom) {
+  if (!rows) return;
+  const cols = new Set(db.prepare('PRAGMA table_info(yoyo_events)').all().map((c) => c.name));
+  db.prepare('DELETE FROM yoyo_events').run();
+  for (const e of rows) insertFrom('yoyo_events', cols, e);
+  db.prepare('UPDATE yoyo_events SET yoyo_uuid = lower(yoyo_uuid) WHERE yoyo_uuid != lower(yoyo_uuid)').run();
+  for (const row of db.prepare('SELECT uuid FROM yoyo_events ORDER BY updated_at, uuid').all()) {
+    db.prepare('UPDATE yoyo_events SET rev = ? WHERE uuid = ?').run(nextRev(), row.uuid);
+  }
+}
+function restoredEventCounts(rows) {
+  const eventsKept = rows ? 0 : db.prepare('SELECT COUNT(*) AS c FROM yoyo_events').get().c;
+  return { events: rows ? rows.length : eventsKept, eventsKept };
+}
+
 async function restoreFromZip(zipPath, res) {
   let entries;
   try { entries = listEntries(zipPath); }
@@ -2226,6 +2555,7 @@ async function restoreFromZip(zipPath, res) {
   // Open the backup DB from a temp file (read-only) and copy its rows in.
   const tmp = path.join(SCRATCH_DIR, `yoyo-restore-${Date.now()}.db`);
   let yoyoRows, photoRows, videoRows, backupHasVideos = true;
+  let backupEvents;
   try {
     await extractEntry(zipPath, dbEntry, tmp);
     const src = openDatabase(tmp, { readOnly: true });
@@ -2235,6 +2565,7 @@ async function restoreFromZip(zipPath, res) {
     // empty list, not a broken backup.
     try { videoRows = src.prepare('SELECT * FROM videos').all(); }
     catch { videoRows = []; backupHasVideos = false; }
+    backupEvents = readBackupEvents(src);
     src.close();
   } catch (err) {
     return res.status(400).json({ error: `Could not read backup database: ${err.message}` });
@@ -2305,13 +2636,17 @@ async function restoreFromZip(zipPath, res) {
     for (const row of db.prepare('SELECT id FROM yoyos ORDER BY updated_at, id').all()) {
       db.prepare('UPDATE yoyos SET rev = ? WHERE id = ?').run(nextRev(), row.id);
     }
+    restoreEvents(backupEvents, insertFrom);
   })();
   // A backup made before the uuid column existed restores rows without one —
   // give those a stable id so the unique index holds and they can sync later.
   backfillUuids(db);
   backfillPhotoUuids(db);
 
-  res.json({ yoyos: yoyoRows.length, photos: photoRows.length, videos: videoRows.length + videosKept, videosKept, photoFiles });
+  res.json({
+    yoyos: yoyoRows.length, photos: photoRows.length, videos: videoRows.length + videosKept, videosKept, photoFiles,
+    ...restoredEventCounts(backupEvents),
+  });
 }
 
 // ---- Multer / error handling ----

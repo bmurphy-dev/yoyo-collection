@@ -35,6 +35,14 @@ export function normalizeDay(s) {
   return t;
 }
 
+// True only for a strict "YYYY-MM-DD" naming a real calendar date. Unlike
+// normalizeDay(), which hands unparseable input back unchanged, this is a
+// validator: event days (yoyo_events.occurred_on) are refused, not stored loose.
+export function isDay(s) {
+  const m = typeof s === 'string' && s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return !!m && isoDay(+m[1], +m[2], +m[3]) === s;
+}
+
 // Today's date in the server's local zone (honours TZ), for download filenames.
 export function localDayStamp(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
