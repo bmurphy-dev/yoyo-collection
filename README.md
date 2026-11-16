@@ -268,6 +268,20 @@ Handy if you want to script against it (subject to the access mode above):
 - `POST /api/yoyos/:id/photos`, `DELETE /api/photos/:photoId`
 - `POST /api/yoyos/:id/videos` — JSON `{ url, title? }`, attach a YouTube /
   Instagram link; `DELETE /api/videos/:videoId`
+- Event log (owner-only) — throws and the maintenance / contest / provenance
+  timeline, all in one `yoyo_events` table:
+  - `GET /api/yoyos/:id/events?type=` — one yoyo's log, newest first
+  - `POST /api/yoyos/:id/events` — JSON `{ type, occurred_on, note?, data? }`.
+    `type: "throw"` toggles that day on/off (`ensure: true` only turns it on);
+    any other type adds an entry. A `contest` or `milestone` also marks the
+    day as thrown.
+  - `PUT /api/events/:uuid`, `DELETE /api/events/:uuid` — edit or remove an entry
+  - `GET /api/events?type=a,b&from=&to=` — across the collection (`full=1`
+    adds notes and details); `GET /api/events/summary` and
+    `GET /api/events/histogram?bucket=year|month` — per-yoyo and per-period totals
+  - `GET /api/sync/events?since=`, `POST /api/sync/events` — the sync feed
+    and push for native apps (see the comments in `events.js` and `server.js`
+    for the contract)
 - `POST /api/track` — carrier ETA look-up (needs carrier creds)
 - `GET /api/stats`, `GET /api/config`
 - `GET /api/backup.zip`, `POST /api/restore`

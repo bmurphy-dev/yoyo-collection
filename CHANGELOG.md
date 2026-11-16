@@ -3,6 +3,54 @@
 All notable changes to this project are documented here. Every commit that
 changes app behavior gets an entry — newest first.
 
+## 2026-11-15
+- **Throw log ("used today").** Mark a yoyo as thrown today from its detail
+  sheet, or select several in the Collection and choose **Used today**. Forgot
+  a day? Tap it in the detail sheet's 12-week strip or its calendar. From the
+  log, Insights (owner-only) gains:
+  - **Most thrown** by week, month, year, and — once the log is old enough —
+    2, 3, 5 and 10 years and all time; **Long-term trends** by year or month.
+  - **Everyday carry** (thrown on 15+ of the last 30 days), **Collecting
+    dust** (thrown this past year, but not in the last 90 days) and **Shelf
+    queens** (2 days or fewer in the last year, owned 90+ days). These are
+    worked out from the log and never stored; `favorite` stays a manual flag.
+  - A **throw calendar**, the current **streak**, and a Yoyo of the day that
+    favors neglected yoyos for the owner. Visitors see none of this.
+- **Maintenance, contest and provenance log.** **Log event** on a yoyo's detail
+  sheet records a bearing clean, lube, bearing or pad swap, string change, mod,
+  damage, repair, contest, milestone, autograph, loan, or a note — each with a
+  date, a note and a few optional details. They show as a **Timeline** on the
+  detail sheet, together with "Bought from" / "Sold to" (read from the yoyo's
+  own fields) and throws summed up per month.
+  - Dates known only to the month or year ("ran at 2019 Worlds") are stored
+    and shown that way.
+  - A contest or milestone also counts as a throw that day.
+  - A yoyo that's lent out shows **Lent to …** until a "Returned" is logged,
+    and the Collection has a **Lent out** filter. A loan can carry a **due
+    back** date: the badge then says when it's due, turns amber in its last
+    week and red once overdue, Insights lists every open loan, and a reminder
+    appears (at most once a day) while one is due or overdue.
+  - Insights gains a **Competition record**, and **Due for a clean**: yoyos
+    thrown on N or more days since their last clean or bearing swap. N is set
+    under Settings → Cleaning reminder; blank turns it off. Lube-only days
+    don't reset the count.
+- **How it's stored and synced.** Both logs live in one new table,
+  `yoyo_events`, added with `CREATE TABLE IF NOT EXISTS` — no existing table
+  or column changes, and `/api/sync/changes` and `/api/sync/push` are
+  untouched. Events have their own feed, `GET`/`POST /api/sync/events`, and
+  merge row by row (last-writer-wins on `updated_at`, deletes as tombstones),
+  so a client that never calls it is unaffected. A throw's id is derived from
+  its yoyo and day, so two devices logging the same day converge on one row;
+  `events.js` documents the derivation and a test pins it. Events key a yoyo
+  by its lowercased uuid, so the log works the same whether a device writes
+  uuids in upper or lower case. Logging never bumps the yoyo's own
+  `updated_at`.
+- **Backup and restore.** Backups already carry the log (it's in the
+  database). Restoring a backup that has the table replaces the log; one that
+  doesn't — taken before this release, or a native app's "Publish to
+  website" — leaves the site's log in place, the same rule linked videos
+  follow. The restore response reports `events` and `eventsKept`.
+
 ## 2026-10-22
 - **New colorway.** Use the button in a yoyo's detail sheet, or "New
   colorway…" in its right-click menu, to open the Add form pre-filled from
