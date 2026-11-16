@@ -123,3 +123,31 @@ CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL DEFAULT ''
 );
+
+-- Dated events on a yoyo: the throw log ("used today") and the maintenance,
+-- contest and provenance log share this one table, told apart by `type`.
+--
+-- Unlike photos and videos, events do NOT ride the parent yoyo through sync.
+-- They have their own change feed (/api/sync/events) and merge row by row,
+-- last-writer-wins on updated_at, so two devices logging on the same day keep
+-- both events instead of one push replacing the other's list. Rows are never
+-- removed, only tombstoned (deleted_at), so an undo propagates.
+--
+-- Keyed by yoyos.uuid rather than yoyos.id (ids are server-local), with no
+-- foreign key: an event may arrive for a yoyo that is later deleted, and it
+-- stays as history. Every read joins on a live yoyo.
+CREATE TABLE IF NOT EXISTS yoyo_events (
+  uuid        TEXT PRIMARY KEY,           -- random v4, or derived v5 for throws (see events.js throwUuid)
+  yoyo_uuid   TEXT NOT NULL,              -- yoyos.uuid, always lowercased (yoyos.uuid itself may be either case)
+  type        TEXT NOT NULL,              -- 'throw', 'clean', 'contest', ... (any ^[a-z][a-z0-9_]{0,31}$)
+  occurred_on TEXT NOT NULL,              -- 'YYYY-MM-DD' in the user's local calendar
+  note        TEXT NOT NULL DEFAULT '',
+  data        TEXT NOT NULL DEFAULT '{}', -- small type-specific JSON, e.g. {"string": "..."}; '{}' for throws
+  deleted_at  TEXT,                       -- tombstone; NULL = live
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  rev         INTEGER NOT NULL DEFAULT 0  -- change-feed position, from the shared settings.sync_rev
+);
+CREATE INDEX IF NOT EXISTS idx_events_yoyo ON yoyo_events(yoyo_uuid, type, occurred_on);
+CREATE INDEX IF NOT EXISTS idx_events_rev  ON yoyo_events(rev);
+CREATE INDEX IF NOT EXISTS idx_events_day  ON yoyo_events(type, occurred_on);
